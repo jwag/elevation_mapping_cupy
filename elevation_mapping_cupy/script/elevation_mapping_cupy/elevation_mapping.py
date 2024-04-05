@@ -9,10 +9,16 @@ import numpy as np
 import threading
 import subprocess
 
+# TODO: Modify so imports only happen if traversability is being computed
+# from elevation_mapping_cupy.traversability_filter import (
+#     get_filter_chainer,
+#     get_filter_torch,
+# )
+
 from elevation_mapping_cupy.traversability_filter import (
-    get_filter_chainer,
     get_filter_torch,
 )
+
 from elevation_mapping_cupy.parameter import Parameter
 
 from elevation_mapping_cupy.kernels import (
@@ -100,7 +106,10 @@ class ElevationMap:
 
         self.semantic_map.initialize_fusion()
 
-        weight_file = subprocess.getoutput('echo "' + param.weight_file + '"')
+        # The below subprocess command does not work on Windows properly. It leaves a set of quotations around the path.
+        # Bypassing this for now by assuming weight_file is already in the correct format.
+        # weight_file = subprocess.getoutput('echo "' + param.weight_file + '"')
+        weight_file = param.weight_file
         param.load_weights(weight_file)
 
         if param.use_chainer:
@@ -111,7 +120,10 @@ class ElevationMap:
 
         # Plugins
         self.plugin_manager = PluginManager(cell_n=self.cell_n)
-        plugin_config_file = subprocess.getoutput('echo "' + param.plugin_config_file + '"')
+        # The below subprocess command does not work on Windows properly. It leaves a set of quotations around the path.
+        # Bypassing this for now by assuming plugin_config_file is already in the correct format.
+        # plugin_config_file = subprocess.getoutput('echo "' + param.plugin_config_file + '"')
+        plugin_config_file = param.plugin_config_file
         self.plugin_manager.load_plugin_settings(plugin_config_file)
 
         self.map_initializer = MapInitializer(self.initial_variance, param.initialized_variance, xp=cp, method="points")
@@ -723,8 +735,9 @@ class ElevationMap:
             else:
                 print("Layer {} is not in the map".format(name))
                 return
-        m = xp.flip(m, 0)
-        m = xp.flip(m, 1)
+        # TODO: Determine if flipping is necessary
+        # m = xp.flip(m, 0)
+        # m = xp.flip(m, 1)
         if use_stream:
             stream = cp.cuda.Stream(non_blocking=False)
         else:
@@ -742,8 +755,9 @@ class ElevationMap:
         normal_y = normal[1, 1:-1, 1:-1]
         normal_z = normal[2, 1:-1, 1:-1]
         maps = xp.stack([normal_x, normal_y, normal_z], axis=0)
-        maps = xp.flip(maps, 1)
-        maps = xp.flip(maps, 2)
+        # TODO: Determine if flipping is necessary
+        # maps = xp.flip(maps, 1)
+        # maps = xp.flip(maps, 2)
         maps = xp.asnumpy(maps)
         return maps
 
@@ -876,40 +890,78 @@ if __name__ == "__main__":
     #  Test script for profiling.
     #  $ python -m cProfile -o profile.stats elevation_mapping.py
     #  $ snakeviz profile.stats
+
+    # Get the directory of the script
+    # Which should be located at: ws_dir/elevation_mapping_cupy/elevation_mapping_cupy/script/elevation_mapping.py
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    # Back up two directories to find the base directory of the package
+    # located here: ws_dir/elevation_mapping_cupy/
+    base_dir = os.path.dirname(os.path.dirname(script_dir))
+    # Navigate down to the core config directory
+    # located here: ws_dir/elevation_mapping_cupy/elevation_mapping_cupy/config/core/plugin_config.yaml
+    core_dir = os.path.join(base_dir, 'config', 'core')
+    # Navigate down to the directory for the vortex_simple_blade platform
+    vortex_simple_blade_dir = os.path.join(base_dir, 'config', 'setups', 'vortex_simple_blade')
+
     xp.random.seed(123)
-    R = xp.random.rand(3, 3)
-    t = xp.random.rand(3)
+    # R = xp.random.rand(3, 3)
+    R = xp.eye(3,3)
+    # t = xp.random.rand(3)
+    t = xp.zeros(3)
+    t[2] += 1.0
     print(R, t)
     param = Parameter(
-        use_chainer=False, weight_file="../config/weights.dat", plugin_config_file="../config/plugin_config.yaml",
+        use_chainer=False, weight_file=os.path.join(core_dir, "weights.dat"), plugin_config_file=os.path.join(vortex_simple_blade_dir, "plugin_config.yaml"),
     )
-    param.additional_layers = ["rgb", "grass", "tree", "people"]
-    param.fusion_algorithms = ["color", "class_bayesian", "class_bayesian", "class_bayesian"]
+    # param.additional_layers = ["rgb", "grass", "tree", "people"]
+    # param.fusion_algorithms = ["color", "class_bayesian", "class_bayesian", "class_bayesian"]
+    param.additional_layers = ["rgb"]
+    param.fusion_algorithms = ["pointcloud_color"]
+    param.initial_variance = 1000.0
+    param.initialized_variance = 1000.0
+    param.max_height_range = 100.0
+    param.mahalanobis_thresh = 100.0
+    param.sensor_noise_factor = 1e-10
+    param.ramped_height_range_a = 100.0
+    param.pointcloud_channel_fusions = {"rgb": "color"}#, "default": "average"}
     param.update()
     elevation = ElevationMap(param)
     layers = [
         "elevation",
         "variance",
-        "traversability",
+        # "traversability",
         "min_filter",
         "smooth",
-        "inpaint",
+        # "inpaint",
         "rgb",
     ]
-    points = xp.random.rand(100000, len(layers))
+    points = xp.random.rand(100000, 3 + len(layers)-1)
+    points[:, 0] = 0.0
+    points[:, 1] = 0.0
+    points[:, 2] = -1.0
 
     channels = ["x", "y", "z"] + param.additional_layers
     print(channels)
     data = np.zeros((elevation.cell_n - 2, elevation.cell_n - 2), dtype=np.float32)
     for i in range(50):
+        points[:, 0] += param.resolution*2
+        points[:, 1] += param.resolution*2
+        points[:, 2] += 0.1
         elevation.input_pointcloud(points, channels, R, t, 0, 0)
-        elevation.update_normal(elevation.elevation_map[0])
-        pos = np.array([i * 0.01, i * 0.02, i * 0.01])
-        elevation.move_to(pos, R)
+        # elevation.update_normal(elevation.elevation_map[0])
+        # pos = np.array([i * 0.01, i * 0.02, i * 0.01])
+        # elevation.move_to(pos, R)
         for layer in layers:
             elevation.get_map_with_name_ref(layer, data)
         print(i)
-        polygon = cp.array([[0, 0], [2, 0], [0, 2]], dtype=param.data_type)
-        result = np.array([0, 0, 0])
-        elevation.get_polygon_traversability(polygon, result)
-        print(result)
+        # polygon = cp.array([[0, 0], [2, 0], [0, 2]], dtype=param.data_type)
+        # result = np.array([0, 0, 0])
+        # elevation.get_polygon_traversability(polygon, result)
+        # print(result)
+    import matplotlib.pyplot as plt
+    elevation.get_map_with_name_ref("elevation", data)
+    # Set value of corners to 0.1 and -0.1 to make sure we can interpret the plot axes properly
+    data[0:10,0:2] = 0.1
+    data[0:2,0:10] = -0.1
+    plt.imshow(data)
+    plt.show()

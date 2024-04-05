@@ -21,7 +21,7 @@ class Parameter(Serializable):
         subscriber_cfg: The configuration for the subscriber.
                         (Default: ``{ "front_cam": { "channels": ["rgb", "person"], "topic_name": "/elevation_mapping/pointcloud_semantic", "data_type": "pointcloud", } }``)
         additional_layers: The additional layers for the map.  
-                           (Default: ``["color"]``)
+                           (Default: ``["rgb"]``)
         fusion_algorithms: The list of fusion algorithms.  
                            (Default: ``[ "image_color", "image_exponential", "pointcloud_average", "pointcloud_bayesian_inference", "pointcloud_class_average", "pointcloud_class_bayesian", "pointcloud_class_max", "pointcloud_color", ]``)
         pointcloud_channel_fusions: The fusion for pointcloud channels.  
@@ -144,7 +144,7 @@ class Parameter(Serializable):
             }
         }
     )  # configuration for the subscriber
-    additional_layers: list = field(default_factory=lambda: ["color"])  # additional layers for the map
+    additional_layers: list = field(default_factory=lambda: ["rgb"])  # additional layers for the map
     fusion_algorithms: list = field(
         default_factory=lambda: [
             "image_color",
