@@ -1,4 +1,5 @@
 # Jacob Installation Instructions 
+TODO: Update instructions to use requirements_no_ros.txt or something similar
 ```
 python -m venv em_cupy_venv
 .\em_cupy_venv\Scripts\Activate.ps1
@@ -7,6 +8,7 @@ cd elevation_mapping_cupy
 pip install -e .
 pip install ruamel.yaml
 pip install shapely==1.7.1
+pip install simple_parsing
 pip install scipy
 pip install torch --index-url https://download.pytorch.org/whl/cu117
 pip install matplotlib
@@ -35,3 +37,6 @@ See this [docs page](https://leggedrobotics.github.io/elevation_mapping_cupy/usa
 * Add checks for invalid rotation matrix?
 * Figure out why they flip the maps when accessing a layer
 * Also what is the buffer of 1 cell around each edge for?
+* Review Soil Mass Sensor dimensions in Vortex and placement wrt blade
+* Finish Lidar sensor addition and figure out transforms
+
