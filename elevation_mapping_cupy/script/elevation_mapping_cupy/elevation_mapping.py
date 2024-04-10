@@ -915,15 +915,17 @@ if __name__ == "__main__":
     )
     # param.additional_layers = ["rgb", "grass", "tree", "people"]
     # param.fusion_algorithms = ["color", "class_bayesian", "class_bayesian", "class_bayesian"]
-    param.additional_layers = ["rgb"]
-    param.fusion_algorithms = ["pointcloud_color"]
+    # param.additional_layers = ["rgb"]
+    param.additional_layers = []
+    # param.fusion_algorithms = ["pointcloud_color"]
     param.initial_variance = 1000.0
     param.initialized_variance = 1000.0
     param.max_height_range = 100.0
     param.mahalanobis_thresh = 100.0
     param.sensor_noise_factor = 1e-10
     param.ramped_height_range_a = 100.0
-    param.pointcloud_channel_fusions = {"rgb": "color"}#, "default": "average"}
+    # param.pointcloud_channel_fusions = {"rgb": "color"}#, "default": "average"}
+    param.pointcloud_channel_fusions = {"default": "average"}
     param.update()
     elevation = ElevationMap(param)
     layers = [
@@ -933,7 +935,7 @@ if __name__ == "__main__":
         "min_filter",
         "smooth",
         # "inpaint",
-        "rgb",
+        # "rgb",
     ]
     points = xp.random.rand(100000, 3 + len(layers)-1)
     points[:, 0] = 0.0

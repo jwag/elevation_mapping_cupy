@@ -39,4 +39,7 @@ See this [docs page](https://leggedrobotics.github.io/elevation_mapping_cupy/usa
 * Also what is the buffer of 1 cell around each edge for?
 * Review Soil Mass Sensor dimensions in Vortex and placement wrt blade
 * Finish Lidar sensor addition and figure out transforms
+* The z noise function that is used to determine the appropriate level of noise for a point seems wrong. Why would it have the error be related to the z axis coordinate of the point cloud. It should be based on the range if anything. used in error_counting_kernel and add_points_kernel
+* Also don't understand is_valid function? What is dxy used for. Does this assume the map is moved to the current robot position?
+* line 189 of custom_kernels looks wrong.
 
