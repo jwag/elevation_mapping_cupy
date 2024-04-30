@@ -1,4 +1,7 @@
-# Jacob Installation Instructions 
+# Overview
+This is a working document that serves as guide to understanding the functionality of the `elevation_mapping_cupy` package. It includes detailed explanations of the package's operations, addresses any open questions, supplements missing documentation, and suggests potential improvements.
+
+## Jacob Installation Instructions 
 TODO: Update instructions to use requirements_no_ros.txt or something similar
 ```
 python -m venv em_cupy_venv
@@ -29,17 +32,77 @@ See this [docs page](https://leggedrobotics.github.io/elevation_mapping_cupy/usa
 * rgb vs. Color: There seems to have been a change in terminology at somepoint within the package. rgb now is used to refer to a layer name where the suffix _color is used to define fusion algorithms and kernels.
 * PCL rgb: the rgb field in a PCL pointcloud is a float32, but contains 3 uint 8 values. See [PCL Docs](https://pointclouds.org/documentation/structpcl_1_1_point_x_y_z_r_g_b.html)
 * Map Size: Set by resolution and map_length. Map is assumed to be square which is wasteful for my needs
-
+* Height Drift Compensation: The parameters position_noise_thresh and orientation_noise_thresh are used to determine if the height drift compensation should be applied for a given measurement or not. If the noise from the measurement is larger than either of the thresholds then it is applied as long as enable_height_drift_compensation is true, at least min_height_drift_cnt points from the observation are used to compute the height drift error, and the computed mean_error is less than the specified max_drift parameter. The drift compensation is applied based on the formula h += mean_drift_error * drift_compensation_alpha
+* The map_util transform_p() is used to transform a point represented in the sensor frame to a point in the world/map frame. 
 
 ## TODO
-* Allow for disabling traversability filter layer
+* Allow for disabling traversability filter layer. Would have to modify the height drift compensation as well as it uses travesability to mask out points used in the calculation.
 * Allow for rectangualr map instead of just square
 * Add checks for invalid rotation matrix?
-* Figure out why they flip the maps when accessing a layer
-* Also what is the buffer of 1 cell around each edge for?
 * Review Soil Mass Sensor dimensions in Vortex and placement wrt blade
 * Finish Lidar sensor addition and figure out transforms
+* Add ENUMS or something to accessing layers in CUDA code to make more obvious what layers are being used at a given point.
+* Modification of layers in ElevationMap class would require re-coding because the cuda models index the layers directly assuming a fixed ordering
+* Consider modifying height drift compensation to modify the height of the observation instead of moving the map.
+* In update_map_with_kernel() the height drift compensation is only applied to the elevation layer and not to the upper bound layer. This should likely be applied to both.
+* Clean up indexing of points, e.g. see add_points_kernel() rx, ry, rz indexing
+* In python ros node the variance due to change in time is only updated with a fixed value of time_variance whenever the timer based callback is called. The rate is set by another parameter update_variance_fps. A better way of parameterizing this would be to set the rate at which you want to have the variance evolve and then set a timer for how often this update should be performed. Then at each call the amount of temporal variance to add could be calcualted based on a timestamp differential.
+
+
+## Questions
 * The z noise function that is used to determine the appropriate level of noise for a point seems wrong. Why would it have the error be related to the z axis coordinate of the point cloud. It should be based on the range if anything. used in error_counting_kernel and add_points_kernel
 * Also don't understand is_valid function? What is dxy used for. Does this assume the map is moved to the current robot position?
-* line 189 of custom_kernels looks wrong.
+* For wall detection and counting of points within a cell, is that tracked over time or only within a given scan?
+* Figure out why they flip the maps when accessing a layer
+* Also what is the buffer of 1 cell around each edge for?
+* What is the is_valid() doing?
 
+
+## Notes
+* Layer names and indicies in ElevationMap class: `self.layer_names = ["elevation": 0, "variance": 1, "is_valid": 2, "traversability": 3, "time": 4, "upper_bound": 5, "is_upper_bound": 6]` 
+* FYI the ROS wrapper does move the elevation map periodically to be at the location of the vehicle using the move_to function. I don't think not using that breaks anything but maybe the robot_centric_elevation_map plugin which uses the base_rotation variable. This could be provided via other means though.
+* The map center is tracked seprately and is not necessarily coincident with the map frame. If move_to() or move() is called this shifts the entire map to that location while ensuring that the data remains at the same coordinates in the map frame. It just changes coordinates relative to the map center frame. This is performed with a roll function and unknown regions are intialized to the initial variance and an invalid elevation state. 
+* When data is provided via a pointcloud with a transform from map frame to the sensor this translation (not rotation) is shifted so that it represents the translation of the sensor frame with respect to the map center. 
+* The error_counting_kernel is applied next and calculates the error between the point cloud and the existing map. This is used to implement the height drift compensation as is described in section II.D of [1]. The main output of this kernel is the error, error_cnt and newmap which has traversability and time layers assigned some values.
+* R and t provided to input_pointcloud() and subsequently update_map_with_kernel() are the rotation matrix and translation vector representing $T_{ws}(R,t)$ i.e. the transform from the world frame to the sensor frame. In update_map_with_kernel() t is modifed using the function shift_translation_to_map_center(). What this effectively does is make it so that the old R and the new t represent the transform $T_{ms}=T_{mw} T_{ws} = T_{wm}^{-1}T_{ws}$ where $T_{wm}$ is the transfrom from the world to map frame cosisting purely of a translation. The rotation component of $T_{ws}$ is equavlent to the rotation component of $T_{ms}$ because the map frame $\{m\}$ is aligned with the world frame $\{w\}$ by construction. The point coordinates in the map frame can therefore be provided by $p_m = T_{ms} p_s$ which is implemneted in the add_points_kernel().
+* The time layer doesn't get used for time based variance but is instead only used in the visibility cleanup step
+* In original elevation_mapping package is this [product of transforms](https://github.com/ANYbotics/elevation_mapping/blob/82aa8a566a62e9cb9c4013c13b6fa3591ce755ec/elevation_mapping/src/sensor_processors/StructuredLightSensorProcessor.cpp#L58) an error? I don't think so, just different syntax. look at how CBM is defined.
+
+
+## References
+
+### Paper [1]
+If you use the Elevation Mapping CuPy, please cite the following paper:
+Elevation Mapping for Locomotion and Navigation using GPU
+
+[Elevation Mapping for Locomotion and Navigation using GPU](https://arxiv.org/abs/2204.12876)
+
+Takahiro Miki, Lorenz Wellhausen, Ruben Grandia, Fabian Jenelten, Timon Homberger, Marco Hutter  
+
+```bibtex
+@inproceedings{miki2022elevation,
+  title={Elevation mapping for locomotion and navigation using gpu},
+  author={Miki, Takahiro and Wellhausen, Lorenz and Grandia, Ruben and Jenelten, Fabian and Homberger, Timon and Hutter, Marco},
+  booktitle={2022 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
+  pages={2273--2280},
+  year={2022},
+  organization={IEEE}
+}
+```
+### Paper [2]
+If you use the Multi-modal Elevation Mapping for color or semantic layers, please cite the following paper:
+
+[MEM: Multi-Modal Elevation Mapping for Robotics and Learning](https://arxiv.org/abs/2309.16818v1)
+
+Gian Erni, Jonas Frey, Takahiro Miki, Matias Mattamala, Marco Hutter
+
+```bibtex
+@inproceedings{erni2023mem,
+  title={MEM: Multi-Modal Elevation Mapping for Robotics and Learning},
+  author={Erni, Gian and Frey, Jonas and Miki, Takahiro and Mattamala, Matias and Hutter, Marco},
+  booktitle={2023 IEEE/RSJ International Conference on Intelligent Robots and Systems (IROS)},
+  pages={11011--11018},
+  year={2023},
+  organization={IEEE}
+}
+```
