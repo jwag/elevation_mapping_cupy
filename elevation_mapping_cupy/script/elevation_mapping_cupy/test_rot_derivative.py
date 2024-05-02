@@ -30,7 +30,7 @@ SS = lambda v: np.array([[0, -v[2], v[1]],
 ei = lambda i: np.array([1 if j == i else 0 for j in range(3)])
 
 
-def get_ext_euler_angles(C, pitch_estimate=0.0):
+def get_ext_euler_angles(C):
     """
     Extract Extrinsically defined Euler angles from rotation matrix
     The transformation matrix C in terms of
@@ -56,19 +56,39 @@ def get_ext_euler_angles(C, pitch_estimate=0.0):
     Using Reference: Computing Euler Angles from a Rotation Matrix by Gregory G. Slabaugh
     https://eecs.qmul.ac.uk/~gslabaugh/publications/euler.pdf
 
-    2 solutions for pitch always exist. The first always lies between -90 and 90 degrees.
-    The second lies between 90 and 270 degrees. We default to the first solution, but allow
-    the user to select between them by providing an estimate of the pitch angle.
+    2 solutions for these Extrinsic Tait-Bryan angles always exist. 
+    The Eigen geometry module function eulerAngles(ax1,ax2,ax3) returns the intrinsically
+    defined Euler angles (a,b,c) applied in the order ax1, ax2, ax3. and ensures that the angles
+    (a,b,c) are in the ranges [0:pi]x[-pi:pi]x[-pi:pi].
+    (https://eigen.tuxfamily.org/dox/group__Geometry__Module.html#title20)
+    In order to obtain Extrinsic Tait-Bryan angles applied in the order x-y-z, robot_localization
+    uses the Eigen function y,p,r = eulerAngles(2,1,0)
+    (https://github.com/cra-ros-pkg/robot_localization/blob/49aab740c0b66c9f266141522e86d64dc86c8939/src/ros_robot_localization_listener.cpp#L456)
+    which means that the orientation state being tracked by robot_localization
+    (r,p,y) are in [-pi:pi]x[-pi:pi]x[0:pi].
+    Given this assumption we can select the correct set of angles
     """
     if np.abs(C[2, 0]) != 1.0:
         pitch1 = -np.arcsin(C[2,0]) # Different compared to paper due to 
         pitch2 = np.pi - pitch1
-        if pitch_estimate > -np.pi/2 and pitch_estimate < np.pi/2:
-            pitch = pitch1
+        roll1 = np.arctan2(C[2,1]/np.cos(pitch1), C[2,2]/np.cos(pitch1))
+        roll2 = np.arctan2(C[2,1]/np.cos(pitch2), C[2,2]/np.cos(pitch2))
+        yaw1 = np.arctan2(C[1,0]/np.cos(pitch1), C[0,0]/np.cos(pitch1))
+        yaw2 = np.arctan2(C[1,0]/np.cos(pitch2), C[0,0]/np.cos(pitch2))
+        # Select the correct set of angles
+        a1_valid = roll1 > -np.pi and roll1 < np.pi
+        a1_valid = a1_valid and (pitch1 > -np.pi and pitch1 < np.pi)
+        a1_valid = a1_valid and (yaw1 > 0 and yaw1 < np.pi)
+        a2_valid = roll2 > -np.pi and roll2 < np.pi
+        a2_valid = a2_valid and (pitch2 > -np.pi and pitch2 < np.pi)
+        a2_valid = a2_valid and (yaw2 > 0 and yaw2 < np.pi)
+        if a1_valid:
+            roll, pitch, yaw = roll1, pitch1, yaw1
+        elif a2_valid:
+            roll, pitch, yaw = roll2, pitch2, yaw2
         else:
-            pitch = pitch2
-        roll = np.arctan2(C[2,1]/np.cos(pitch), C[2,2]/np.cos(pitch))
-        yaw = np.arctan2(C[1,0]/np.cos(pitch), C[0,0]/np.cos(pitch))
+            raise ValueError("No valid set of Euler angles found")
+            
     else: # Gimbal lock: pitch is at -90 or 90 degrees
         yaw = 0.0 # This can be any value, but we choose 0.0 for consistency
         if C[2, 0] == -1.0:
@@ -83,6 +103,15 @@ def get_ext_euler_angles(C, pitch_estimate=0.0):
 # For extrinsic rotations is is to roll about x, pitch about y, and yaw about z (in that order)
 # This means the multiplication will be in the order Rz*Ry*Rx
 ExtEulerRot = lambda roll, pitch, yaw: np.dot(Rz(yaw), np.dot(Ry(pitch), Rx(roll)))
+
+def wrap_euler_angles(roll, pitch, yaw):
+    """
+    Force Euler angles to be in the ranges (r,p,y) = [-pi:pi]x[-pi:pi]x[0:pi]
+    to be consistent with robot_localization package and Eigen library
+    """
+    C_ = ExtEulerRot(roll, pitch, yaw)
+    roll, pitch, yaw = get_ext_euler_angles(C_)
+    return C_, roll, pitch, yaw
 
 # Change in rotation matrix with respect to small change in Euler angles
 def delta_Cr(roll, pitch, yaw, r, drot):
@@ -149,7 +178,7 @@ def get_cov_ellipsoid(cov, mu=np.zeros((3)), nstd=3):
 
 # Feel free to change these values that define the rotation matrix
 roll_deg = 15.0
-pitch_deg = 95.0
+pitch_deg = 186
 # pitch_deg = 10.0
 yaw_deg = -5.0
 r = np.array([1.0, 2.0, 3.0])
@@ -158,10 +187,9 @@ r = np.array([1.0, 2.0, 3.0])
 # If we know the Euler angles then we can compute Rx(roll)
 # However, if we only have the rotation matrix C then we need to extract the Euler angles
 # Unfortunately, there are two solutions for sets of angles, that produce the same rotation matrix
-# If we know the Euler angles (pitch in this case) then we can select the correct set of angles
-# If we don't know the Euler angles then we don't know which set of angles to select
-# It does affect the Jacobian, but it doesn't seem to affect the error propagation
-USE_CORRECT_EULER_QUADRANT = True
+# If we know the Euler angles then this is trivail, but if we don't then we need to select the correct set
+# By default we assume that the angles are in the ranges [-pi:pi]x[-pi:pi]x[0:pi] which is what is done in robot_localization
+# This resolves the ambiguity in Euler angle extraction
 
 # Small value for numerical differentiation
 drot = np.array([0.001, 0.001, 0.001])
@@ -169,7 +197,11 @@ drot = np.array([0.001, 0.001, 0.001])
 roll = roll_deg * np.pi/180
 pitch = pitch_deg * np.pi/180
 yaw = yaw_deg * np.pi/180
+# Force Euler angles to be in the ranges (r,p,y) = [-pi:pi]x[-pi:pi]x[0:pi]
+# to be consistent with robot_localization package and Eigen library
+C_, roll, pitch, yaw = wrap_euler_angles(roll, pitch, yaw)
 C = ExtEulerRot(roll, pitch, yaw)
+assert np.allclose(C, C_), "Euler angles extraction failed"
 print("Rotation matrix C: \n", C)
 
 # Now define the derivative of the rotation matrix with respect to the Euler angles
@@ -180,7 +212,7 @@ print("Derivative of rotation matrix C * r with respect to roll, pitch, and yaw 
 
 # First using method outlined by James R. Lucas in "Differentiation of the Orientation Matrix by Matrix Multipliers"
 # https://www.asprs.org/wp-content/uploads/pers/1963journal/jul/1963_jul_708-715.pdf
-roll_est, pitch_est, yaw_est = get_ext_euler_angles(C, pitch_estimate=pitch if USE_CORRECT_EULER_QUADRANT else 0.0)
+roll_est, pitch_est, yaw_est = get_ext_euler_angles(C)
 # Compare the estimated Euler angles with the original Euler angles
 print("Original Euler angles: ", roll, pitch, yaw)
 print("Estimated Euler angles: ", roll_est, pitch_est, yaw_est)
