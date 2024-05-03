@@ -76,12 +76,12 @@ def get_ext_euler_angles(C):
         yaw1 = np.arctan2(C[1,0]/np.cos(pitch1), C[0,0]/np.cos(pitch1))
         yaw2 = np.arctan2(C[1,0]/np.cos(pitch2), C[0,0]/np.cos(pitch2))
         # Select the correct set of angles
-        a1_valid = roll1 > -np.pi and roll1 < np.pi
-        a1_valid = a1_valid and (pitch1 > -np.pi and pitch1 < np.pi)
-        a1_valid = a1_valid and (yaw1 > 0 and yaw1 < np.pi)
-        a2_valid = roll2 > -np.pi and roll2 < np.pi
-        a2_valid = a2_valid and (pitch2 > -np.pi and pitch2 < np.pi)
-        a2_valid = a2_valid and (yaw2 > 0 and yaw2 < np.pi)
+        a1_valid = roll1 >= -np.pi and roll1 <= np.pi
+        a1_valid = a1_valid and (pitch1 >= -np.pi and pitch1 <= np.pi)
+        a1_valid = a1_valid and (yaw1 >= 0 and yaw1 <= np.pi)
+        a2_valid = roll2 >= -np.pi and roll2 <= np.pi
+        a2_valid = a2_valid and (pitch2 >= -np.pi and pitch2 <= np.pi)
+        a2_valid = a2_valid and (yaw2 >= 0 and yaw2 <= np.pi)
         if a1_valid:
             roll, pitch, yaw = roll1, pitch1, yaw1
         elif a2_valid:
