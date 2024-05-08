@@ -17,6 +17,15 @@ pip install torch --index-url https://download.pytorch.org/whl/cu117
 pip install matplotlib
 ```
 
+To get profiling working:
+* In NVIDIA Control Panel Desktop->Enable Developer Settings->Manage GPU Performance Counters->Allow Access to the GPU performance counters to all users
+* Open Nsight Systems as admin
+* Select computer as target
+* Use command line argument:
+```c:/Users/RDCERWJW/Documents/REO/code/soil-property-estimation/soil_venv/Scripts/python.exe c:/Users/RDCERWJW/Documents/REO/code/soil-property-estimation/elevation_mapping_cupy/elevation_mapping_cupy/script/elevation_mapping_cupy/sensor_processor.py```
+* Use working directory
+```c:/Users/RDCERWJW/Documents/REO/code/soil-property-estimation/```
+
 ## Terminology
 See this [docs page](https://leggedrobotics.github.io/elevation_mapping_cupy/usage/semantics.html)
 * Layer: A GridMap concept that refers to one of possibly many 2D arrays where each index corresponds to the same location in space in the horizontal plane. 
