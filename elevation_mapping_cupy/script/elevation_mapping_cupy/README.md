@@ -25,6 +25,7 @@ To get profiling working:
 ```c:/Users/RDCERWJW/Documents/REO/code/soil-property-estimation/soil_venv/Scripts/python.exe c:/Users/RDCERWJW/Documents/REO/code/soil-property-estimation/elevation_mapping_cupy/elevation_mapping_cupy/script/elevation_mapping_cupy/sensor_processor.py```
 * Use working directory
 ```c:/Users/RDCERWJW/Documents/REO/code/soil-property-estimation/```
+* Navigate down to green section in timeline (Threads (x)->PID->NVTX) to look at function logs or select Stats System View->NVTX GPU Projection Summary
 
 ## Terminology
 See this [docs page](https://leggedrobotics.github.io/elevation_mapping_cupy/usage/semantics.html)

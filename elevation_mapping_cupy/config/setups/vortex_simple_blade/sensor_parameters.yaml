@@ -10,7 +10,7 @@ subscribers:
   lidar_front: # Must match the observation key from the gym env
     topic_name: '/lidar/front/points'
     data_type: pointcloud
-    noise_model_name: SLS
+    noise_model_name: LiDAR
     SLS_old_noise_model_params:
       sensor_noise_factor: 0.05                       # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
     constant_noise_model_params:
@@ -23,10 +23,16 @@ subscribers:
       d: 22.0e-3
       Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
       Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
+    LiDAR_noise_model_params:
+      a: 0.012
+      b: 6.8
+      c: 0.81
+      Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
+      Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
   lidar_rear: # Must match the observation key from the gym env
     topic_name: '/lidar/rear/points'
     data_type: pointcloud
-    noise_model_name: SLS
+    noise_model_name: LiDAR
     SLS_old_noise_model_params:
       sensor_noise_factor: 0.05                       # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
     constant_noise_model_params:
@@ -37,5 +43,11 @@ subscribers:
       c: 38.0e-3
       # d: (42e-3+2.0e-3)/2.0
       d: 22.0e-3
+      Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
+      Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
+    LiDAR_noise_model_params:
+      a: 0.012
+      b: 6.8
+      c: 0.81
       Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
       Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
