@@ -203,6 +203,7 @@ def sweep_thin_poly_mesh(
         face_colors[n_faces-n_org_faces*2:-n_org_faces,:3] = [0, 255, 0]
         face_colors[-n_org_faces:,:3] = [255, 0, 0]
         face_colors[:, 3] = alpha # Set transparency to alpha
+        # face_colors[0:n_faces-n_org_faces*2,3] = 0 # Set transparency to 0 for swept faces
 
     if kwargs is None:
         kwargs = {}
@@ -247,8 +248,15 @@ if __name__ == "__main__":
     # transforms = np.array([np.eye(4), T_dB, T_dB2, T_dB3])
 
 
-    T_dB = trimesh.transformations.rotation_matrix(np.radians(-20), [0, 1, 0])@np.linalg.inv(T_WB)
-    roll_dirs = np.array([0]) >= 0
+    # T_dB = trimesh.transformations.rotation_matrix(np.radians(-20), [0, 0, 1])@np.linalg.inv(T_WB)
+    # roll_dirs = np.array([-20]) >= 0
+    # transforms = np.array([np.linalg.inv(T_WB), T_dB])
+
+    T_dB = trimesh.transformations.translation_matrix([0.3, 0.4, 0.2])
+    T_dB = trimesh.transformations.rotation_matrix(np.radians(22), [1, 0, 0])@T_dB
+    T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 1, 0])@T_dB
+    T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 0, 1])@T_dB@np.linalg.inv(T_WB)
+    roll_dirs = np.array([5]) >= 0
     transforms = np.array([np.linalg.inv(T_WB), T_dB])
 
     # roll_dirs = np.array([-20]) >= 0
@@ -275,4 +283,5 @@ if __name__ == "__main__":
     pc = trimesh.PointCloud(bbox_world.vertices)
     # Visualize the bounding box
     scene.add_geometry(pc)
-    scene.show(smooth=False)
+    use_wireframe = True
+    scene.show(smooth=False, flags={'wireframe': use_wireframe})
