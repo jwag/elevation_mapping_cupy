@@ -139,30 +139,33 @@ def line_mesh_intersection(line, mesh, coincidence_tol=1e-6):
     return intersections, intersected_lines
     
 
-def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, faces=None, verts1=None, verts2=None):
+def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, face=None, verts1=None, verts2=None):
     # Find the intersection between two thin convex polygon meshes
     mesh1_pierces_mesh2 = False
     mesh2_pierces_mesh1 = False
     # TODO: Add checks for sizes of inputs
     if poly_mesh1 is None:
-        assert faces is not None and boundary is not None and verts1 is not None, "boundary, faces, and verts1 must be provided if poly_mesh1 is not provided"
-        poly_mesh1 = Trimesh(vertices=verts1, faces=faces)
+        assert face is not None and boundary is not None and verts1 is not None, "boundary, faces, and verts1 must be provided if poly_mesh1 is not provided"
+        poly_mesh1 = Trimesh(vertices=verts1, faces=face)
     else:
-        if boundary is None or verts1 is None:
-            bnd, _, _ = get_poly_mesh_boundary(poly_mesh1)
-            if boundary is None:
-                boundary = bnd["edges"]
-            elif verts1 is None:
-                verts1 = bnd["vertices"]
-        if faces is None:
-            faces = poly_mesh1.faces
+        if boundary is None or verts1 is None or face is None:
+            bnd, bnd_face, _ = get_poly_mesh_boundary(poly_mesh1)
+            # If any of the mesh boundary, verts, or faces are not provided,
+            # Then overwrite them with the boundary, vertices, computed from the mesh
+            boundary = bnd["edges"]
+            verts1 = bnd["vertices"]
+            face = bnd_face[None,:]
     if poly_mesh2 is None:
         assert verts2 is not None, "verts2 must be provided if poly_mesh2 is not provided"
-        poly_mesh2 = Trimesh(vertices=verts2, faces=faces)
+        poly_mesh2 = Trimesh(vertices=verts2, faces=face)
     else:
         if verts2 is None:
             bnd, _, _ = get_poly_mesh_boundary(poly_mesh2)
             verts2 = bnd["vertices"]
+    
+    # Face should be a single face of the polygon (not a trimesh face, but a face of the polygon)
+    # This will help us to define two new 3D faces/polygons in the case of a self-intersection
+    assert face.shape[0] == 1, "faces must be a single face of the polygon"
 
     # Define lines for each edge of boundary where the first column lines1[:,0,:] is the origin of the ray
     # and the second column lines1[:,1,:] is the end of the ray
@@ -190,29 +193,97 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         # Add the intersection points to the mesh
         # The suffix indicates wheter or not the mesh is on the pierced side or the piercing side
         intersected_edges = boundary[intersected_lines]
-        # Find the faces that contain the intersected edges
-        # Determine where to split faces based on the intersected edges
-        def find_intersected_faces(faces, intersected_edges):
-            # Find the faces that contain the intersected edges
-            matched_faces = np.zeros((len(faces),len(intersected_edges)), dtype=bool)
-            matched_faces_inds = np.zeros((len(faces),len(intersected_edges)), dtype=int)
+        # Find the face that contain the intersected edges
+        # Determine where to split face based on the intersected edges
+        def find_intersected_face_inds(face, intersected_edges):
+            # Find the indices of the intersected edges in the face
+            intersected_face_inds = np.zeros(len(intersected_edges), dtype=int)
+            # Add the first vertex to the end of the face to make it a closed loop
+            face_circ = np.concatenate((face[0], face[0,0:1]), axis=0)
             for e, edge in enumerate(intersected_edges):
                 # TODO: May have to deal with inverted edges too
-                for f, face in enumerate(faces):
-                    # Add the first vertex to the end of the face to make it a closed loop
-                    face = np.concatenate((face, face[0:1]), axis=0)
-                    for i in np.arange(len(face)-1):
-                        if np.all(face[i:i+2] == edge):
+                    for i in np.arange(len(face_circ)-1):
+                        if np.all(face_circ[i:i+2] == edge):
                             # This face contains the intersected edge
-                            matched_faces[f, e] = True
-                            matched_faces_inds[f, e] = i
-            return matched_faces, matched_faces_inds
-        matched_faces, matched_faces_inds = find_intersected_faces(faces, intersected_edges)
-        # TODO: Look at mapped below to get single face. This is the face that is split
-        # matched faces is a boolean array where matched_faces[f, e] is True if face f contains edge e
-        # The location within the face where the edge is located is stored in matched_faces_inds
+                            intersected_face_inds[e] = i
+            return intersected_face_inds
+        intersected_face_inds = find_intersected_face_inds(face, intersected_edges)
+        # The face now needs split into two faces
+        # The first face will start with the first intersection point, include points from the face
+        # between the first and second intersection points, and end with the second intersection point
+        face_circ = np.concatenate((face[0], face[0,0:1]), axis=0)
+        mesh2_face1_part = face_circ[intersected_face_inds[0]+1:intersected_face_inds[1]+1]
+        mesh2_verts1_part = verts2[mesh2_face1_part]
+        # Add the intersection points to the vertices
+        mesh2_verts1 = np.concatenate((intersections[:1],mesh2_verts1_part, intersections[1:]), axis=0)
+        mesh2_faces1 = np.arange(len(mesh2_verts1), dtype=int)[None,:] # Define a single face
+        # The second face will be from the first vertex of the face to the first intersected edge
+        # with the new vertices inserted, then the remaining vertices of the face that were not intersected
+        mesh2_face2_part1 = face_circ[:intersected_face_inds[0]+1]
+        mesh2_face2_part2 = face_circ[intersected_face_inds[1]+1:-1]
+        mesh2_verts2_part1 = verts2[mesh2_face2_part1]
+        mesh2_verts2_part2 = verts2[mesh2_face2_part2]
+        mesh2_verts2 = np.concatenate((mesh2_verts2_part1, intersections, mesh2_verts2_part2), axis=0)
+        mesh2_faces2 = np.arange(len(mesh2_verts2), dtype=int)[None,:] # Define a single face
+        # TODO: Define mapping between the original face and the two new faces
+        # Now create the two new meshes
+        mesh2_part1 = Trimesh(vertices=mesh2_verts1, faces=mesh2_faces1, face_colors=[255, 0, 0, 255])
+        mesh2_part2 = Trimesh(vertices=mesh2_verts2, faces=mesh2_faces2, face_colors=[0, 255, 0, 255],vertex_colors=[0, 0, 255, 255])
+        # Visualize the two new meshes
+        # scene = trimesh.Scene([mesh2_part1, mesh2_part2])
+        # scene.show()
+        ########################################
+        # Now we need to split mesh1
+        # The faces will be the same as mesh2_part1, but the vertices will be different
+        mesh1_face1_part = mesh2_face1_part
+        mesh1_verts1_part = verts1[mesh1_face1_part]
+        # Add the intersection points to the vertices
+        T21 = hom_inv(T12)
+        # May need to use the length along the ray to determine the corresponding intersection
+        # point on the other mesh if there are numerical issues with using the transformed intersection points
+        intersections_proj = (T21[:3, :3]@intersections.T + T21[:3, 3:]).T
+        mesh1_verts1 = np.concatenate((intersections_proj[:1],mesh1_verts1_part, intersections_proj[1:]), axis=0)
+        mesh1_faces1 = np.arange(len(mesh1_verts1), dtype=int)[None,:] # Define a single face
+        # Edges of the swpet volume for the first surfaces will be defined 1:1 as they are the same geometry.
+        # Define the second face of mesh1
+        # This is a bit more complicated since this face has been pierced and the intersection edge is in the middle
+        # of the face. If we treated this as one surface, then this shape would be concave and not convex.
+        # This means that specifying the face as a single face would not work as the triangulation does not support
+        # concave shapes. Alternatively, we could not remove this hole in the face between intersectons and intersections_proj.
+        # Then the face would be convex and mirror that of mesh2_part2. The other solution is to triangulate the concave
+        # shape using trimesh.creation.triangulate_polygon() for example.
+        mesh1_face2_part1 = mesh2_face2_part1
+        mesh1_verts2_part1 = verts1[mesh1_face2_part1]
+        mesh1_face2_part2 = mesh2_face2_part2
+        mesh1_verts2_part2 = verts1[mesh1_face2_part2]
+        # method that includes the hole in the face. Not working for concave shapes right now
+        # mesh1_verts2 = np.concatenate((mesh1_verts2_part1, intersections_proj[:1],
+        #                                 intersections, intersections_proj[1:],mesh1_verts2_part2), axis=0)
+        # Method that removes the hole in the face. This avoids the concave shape issue
+        mesh1_verts2 = np.concatenate((mesh1_verts2_part1, intersections_proj, mesh1_verts2_part2), axis=0)
+        mesh1_faces2 = np.arange(len(mesh1_verts2), dtype=int)[None,:] # Define a single face
+        # Now create the two new meshes
+        mesh1_part1 = Trimesh(vertices=mesh1_verts1, faces=mesh1_faces1, face_colors=[255, 0, 0, 255])
+        mesh1_part2 = Trimesh(vertices=mesh1_verts2, faces=mesh1_faces2, face_colors=[0, 255, 0, 255],vertex_colors=[0, 0, 255, 255])
+        # Visualize the two new meshes
+        # scene = trimesh.Scene([mesh1_part1, mesh1_part2])#,mesh2_part1, mesh2_part2])
+        # scene.show()
+
+        # Debug mesh
+        # debug_mesh_verts = np.concatenate((intersections_proj[:1],
+        #                                 intersections, intersections_proj[1:]),axis=0)
+        # debug_mesh_faces = np.arange(len(debug_mesh_verts), dtype=int)[None,:]
+        # # flip the face so it is visible from the front
+        # debug_mesh_faces = np.fliplr(debug_mesh_faces)
+        # debug_mesh = Trimesh(vertices=debug_mesh_verts, faces=debug_mesh_faces, face_colors=[255, 0, 255, 255])
+        # scene = trimesh.Scene([debug_mesh, mesh1_part1, mesh1_part2, mesh2_part1, mesh2_part2])
+        # scene.show()
+
+        scene = trimesh.Scene([mesh1_part1, mesh1_part2, mesh2_part1, mesh2_part2])
+        scene.show()
+
         test=1
-        # verts2_pierced = np.concatenate((verts2[], intersections), axis=0)
+
         pass
 
     raise NotImplementedError("Function not fully implemented yet")
@@ -305,8 +376,10 @@ def sweep_thin_poly_mesh(
     # Check for self-intersections between the slices
     # TODO: Loop through them all
     # TODO: Figure out this whole transform issue where initial mesh is translated and rotated...
+    # Using unique to define the single face of the polygon (not a trimesh face, but a face of the polygon)
+    # This will help us to define two new 3D faces/polygons in the case of a self-intersection
     find_intersections(transforms[0],
-                       poly_mesh1=poly_mesh, boundary=boundary, faces=org_faces,
+                       poly_mesh1=poly_mesh, boundary=boundary, face=unique[None,:],
                        verts1=vertices_3D[0:n_unique],
                        verts2 = vertices_3D[n_unique:n_unique*2])
 
@@ -449,5 +522,5 @@ if __name__ == "__main__":
     pc = trimesh.PointCloud(bbox_world.vertices)
     # Visualize the bounding box
     scene.add_geometry(pc)
-    use_wireframe = False
+    use_wireframe = True
     scene.show(smooth=False, flags={'wireframe': use_wireframe})
