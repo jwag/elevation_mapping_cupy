@@ -398,6 +398,18 @@ def get_swept_edges(boundary_edges, roll_dir, convex_interp=True, flip_normals=F
         face_sweep = np.fliplr(face_sweep)
     return face_sweep, n_edges
 
+def get_cap_face(boundary_edges, flip_normals=False):
+    """
+    Get the faces (a single surface) of a cap for a swept volume given the boundary edges
+    """
+    unique = np.unique(boundary_edges.ravel())
+    # simple triangulation of the faces with cutting out slices of the shape
+    # starting with the first vertex and the next two, then the next two, etc
+    face_cap = np.concatenate((np.zeros((len(unique)-2,1),dtype=int),np.lib.stride_tricks.sliding_window_view(np.arange(1,len(unique)), 2)), axis=1)
+    if flip_normals:
+        face_cap = np.fliplr(face_cap)
+    return face_cap
+
 
 def sweep_thin_poly_mesh(
     poly_mesh: Trimesh,
@@ -493,6 +505,7 @@ def sweep_thin_poly_mesh(
         pos_faces = np.empty((0,3))
         neg_verts = np.empty((0,3))
         neg_faces = np.empty((0,3))
+        last_pos_sweep, last_neg_sweep = 0, 0
         for i in range(n_sweeps):
             # Only look for intersections where we already know they are
             if intersected[i]:
@@ -523,53 +536,71 @@ def sweep_thin_poly_mesh(
                 if sides[i]:
                     # Add the past verticies if either this is the first sweep, the previous sweep was negative, or the previous sweep intersected
                     if len(pos_verts) == 0 or not sides[i-1] or intersected[i-1]:
+                        offset = len(pos_verts)
                         pos_verts = np.concatenate((pos_verts, vertices_3D[stride*(i):stride*(i+1)]),axis=0)
-                        pos_faces = np.concatenate((pos_faces, face_sweep), axis=0)
+                        # Add cap faces at the beginning of the sweep to close the volume on one end
+                        cap_face = get_cap_face(boundary, flip_normals = sides[i])
+                        pos_faces = np.concatenate((pos_faces, cap_face+offset), axis=0)
                     offset = len(pos_verts)-stride
                     pos_verts = np.concatenate((pos_verts, vertices_3D[stride*(i+1):stride*(i+2)]),axis=0)
                     pos_faces = np.concatenate((pos_faces, face_sweep+offset), axis=0)
+                    last_pos_sweep = i+1
                 else:
                     # Add the past verticies if either this is the first sweep, the previous sweep was positive, or the previous sweep intersected
                     if len(neg_verts) == 0 or sides[i-1] or intersected[i-1]:
+                        offset = len(neg_verts)
                         neg_verts = np.concatenate((neg_verts, vertices_3D[stride*(i):stride*(i+1)]),axis=0)
-                        neg_faces = np.concatenate((neg_faces, face_sweep), axis=0)
+                        # Add cap faces at the beginning of the sweep to close the volume on one end
+                        cap_face = get_cap_face(boundary, flip_normals = sides[i])
+                        neg_faces = np.concatenate((neg_faces, cap_face+offset), axis=0)
                     offset = len(neg_verts)-stride
                     neg_verts = np.concatenate((neg_verts, vertices_3D[stride*(i+1):stride*(i+2)]),axis=0)
                     neg_faces = np.concatenate((neg_faces, face_sweep+offset), axis=0)
+                    last_neg_sweep = i+1
+
+        # Cap Faces of both volumes
+        # Only cap the end of the positive sweep if the last sweep was positive
+        # otherwise, the cap face will be added when the negative sweep is added
+        if len(pos_verts) != 0 and last_pos_sweep != 0 and last_pos_sweep == n_sweeps:
+            # Handle differently if dealing with intersections
+            cap_face = get_cap_face(boundary, flip_normals = False)
+            pos_faces = np.concatenate((pos_faces, cap_face+len(pos_verts)-stride*last_pos_sweep), axis=0)
+        elif len(neg_verts) != 0 and last_neg_sweep != 0 and last_neg_sweep == n_sweeps:
+            cap_face = get_cap_face(boundary, flip_normals = True)
+            neg_faces = np.concatenate((neg_faces, cap_face+len(neg_verts)-stride*last_neg_sweep), axis=0)
 
 
-    # TODO: Add some of this logic up above
-    # elif cap:
-    #     # these are indices of `vertices_2D` that were not on the boundary
-    #     # which can happen for triangulation algorithms that added vertices
-    #     # we don't currently support that but you could append the unconsumed
-    #     # vertices and then update the mapping below to reflect that
-    #     unconsumed = set(unique).difference(org_faces.ravel())
-    #     if len(unconsumed) > 0:
-    #         raise NotImplementedError("triangulation added vertices: no logic to cap!")
+    # # Cap the ends of the swept volumes
+    # # these are indices of `vertices_2D` that were not on the boundary
+    # # which can happen for triangulation algorithms that added vertices
+    # # we don't currently support that but you could append the unconsumed
+    # # vertices and then update the mapping below to reflect that
+    # unconsumed = set(unique).difference(org_faces.ravel())
+    # if len(unconsumed) > 0:
+    #     raise NotImplementedError("triangulation added vertices: no logic to cap!")
 
-    #     # map the 2D faces to the order we used
-    #     mapped = np.zeros(unique.max() + 2, dtype=np.int64)
-    #     mapped[unique] = np.arange(len(unique))
+    # # map the 2D faces to the order we used
+    # mapped = np.zeros(unique.max() + 2, dtype=np.int64)
+    # mapped[unique] = np.arange(len(unique))
 
-    #     # now should correspond to the first vertex block
-    #     cap_zero = mapped[org_faces]
-    #     # winding will be along +Z so flip for the bottom cap
-    #     # faces.append(np.fliplr(cap_zero))
-    #     faces = np.concatenate((faces, np.fliplr(cap_zero)), axis=0)
-    #     # offset the end cap
-    #     # faces.append(cap_zero + stride * n_sweeps)
-    #     faces = np.concatenate((faces, cap_zero + stride * n_sweeps), axis=0)
-    #     # Define face_colors for mesh where the original face is green,
-    #     # the swept faces are grey, and the final face is red
-    #     alpha = 125
-    #     n_faces = len(faces)
-    #     n_org_faces = len(org_faces)
-    #     face_colors = np.ones((n_faces, 4), dtype=int) * 169 # Set color to grey
-    #     face_colors[n_faces-n_org_faces*2:-n_org_faces,:3] = [0, 255, 0]
-    #     face_colors[-n_org_faces:,:3] = [255, 0, 0]
-    #     face_colors[:, 3] = alpha # Set transparency to alpha
-    #     # face_colors[0:n_faces-n_org_faces*2,3] = 0 # Set transparency to 0 for swept faces
+    # # now should correspond to the first vertex block
+    # cap_zero = mapped[org_faces]
+    # # winding will be along +Z so flip for the bottom cap
+    # # faces.append(np.fliplr(cap_zero))
+    # faces = np.concatenate((faces, np.fliplr(cap_zero)), axis=0)
+    # # offset the end cap
+    # # faces.append(cap_zero + stride * n_sweeps)
+    # faces = np.concatenate((faces, cap_zero + stride * n_sweeps), axis=0)
+    # # Define face_colors for mesh where the original face is green,
+    # # the swept faces are grey, and the final face is red
+    # alpha = 125
+    # n_faces = len(faces)
+    # n_org_faces = len(org_faces)
+    # face_colors = np.ones((n_faces, 4), dtype=int) * 169 # Set color to grey
+    # face_colors[n_faces-n_org_faces*2:-n_org_faces,:3] = [0, 255, 0]
+    # face_colors[-n_org_faces:,:3] = [255, 0, 0]
+    # face_colors[:, 3] = alpha # Set transparency to alpha
+    # # face_colors[0:n_faces-n_org_faces*2,3] = 0 # Set transparency to 0 for swept faces
 
     if kwargs is None:
         kwargs = {}
