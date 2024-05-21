@@ -137,16 +137,76 @@ def line_mesh_intersection(line, mesh, coincidence_tol=1e-6):
             intersected_lines = []
       
     return intersections, intersected_lines
-    
 
-def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, face=None, verts1=None, verts2=None):
+def side_of_plane(points, plane_normal, plane_origin=None):
+    """
+    Similar to trimesh.intersections.point_plane_distance
+    Determines which side of a plane a set of points are on
+
+    Parameters
+    -----------
+    points : (n, 3) float
+      Points in space
+    plane_normal : (3,) float
+      Unit normal vector
+    plane_origin : (3,) float
+      Plane origin in space
+
+    Returns
+    ------------
+    side : (n,) bool
+      Side of plane points are on, True if on positive side, False if on negative side
+    """
+    points = np.asanyarray(points, dtype=np.float64)
+    if plane_origin is None:
+        w = points
+    else:
+        w = points - plane_origin
+    # Handle use of this function for a single normal
+    # or multiple normals per point
+    if plane_normal.shape == (3,):
+      vdot = np.dot(plane_normal, w.T)
+    else:
+      vdot = np.multiply(plane_normal, w).sum(axis=1)
+    # Treat points on the plane as positive side
+    side = vdot >= 0.0
+    return side
+
+
+def side_of_surface(points, stride):
+    """
+    Determines which side of a surface defined by points[i*stride:(i+1)*stride]
+    the points[(i+1)*stride:(i+2)*stride] are on. The positive normal is defined
+    by the cross product of the vector from points[i*stride] to points[i*stride+1]
+    and the vector from points[i*stride+1] to points[i*stride+2]
+    """
+    n_points = len(points)
+    n_surfaces = n_points//stride
+    inds = np.arange(n_surfaces)*stride
+    vec1 = points[inds+1] - points[inds]
+    vec2 = points[inds+2] - points[inds+1]
+    # Remove the last point from vec1 and vec2 because we only want to check against the prior surface
+    vec1 = vec1[:-1]
+    vec2 = vec2[:-1]
+    normals = np.repeat(np.cross(vec1, vec2), stride, 0)
+    origins = points[:-stride]
+    sides = side_of_plane(points[stride:], normals, origins).reshape(n_surfaces-1, stride)
+    # Check if the points are on the same side of the plane
+    # intersected will be true if the points for a given surface are on different sides of the plane
+    intersected = np.logical_not(np.all(np.logical_not(np.logical_xor(sides.T,sides.T[0]).T),axis=1))
+    # sides will be true if all the points for a given surface are on the positive side of the plane
+    # Values at sides[intersected] are not valid and will be false
+    sides = np.all(sides, axis=1)
+    return sides, intersected
+
+def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, face=None, verts1=None, verts2=None, process=False, separate_surfs=True):
     # Find the intersection between two thin convex polygon meshes
     mesh1_pierces_mesh2 = False
     mesh2_pierces_mesh1 = False
     # TODO: Add checks for sizes of inputs
     if poly_mesh1 is None:
         assert face is not None and boundary is not None and verts1 is not None, "boundary, faces, and verts1 must be provided if poly_mesh1 is not provided"
-        poly_mesh1 = Trimesh(vertices=verts1, faces=face)
+        poly_mesh1 = Trimesh(vertices=verts1, faces=face, process=process)
     else:
         if boundary is None or verts1 is None or face is None:
             bnd, bnd_face, _ = get_poly_mesh_boundary(poly_mesh1)
@@ -157,7 +217,7 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
             face = bnd_face[None,:]
     if poly_mesh2 is None:
         assert verts2 is not None, "verts2 must be provided if poly_mesh2 is not provided"
-        poly_mesh2 = Trimesh(vertices=verts2, faces=face)
+        poly_mesh2 = Trimesh(vertices=verts2, faces=face, process=process)
     else:
         if verts2 is None:
             bnd, _, _ = get_poly_mesh_boundary(poly_mesh2)
@@ -183,8 +243,11 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         intersections, intersected_lines = line_mesh_intersection(lines2, poly_mesh1)
         if len(intersections) > 0:
             mesh2_pierces_mesh1 = True
-    
-    if mesh1_pierces_mesh2:
+
+    valid_intersect = (mesh1_pierces_mesh2 or mesh2_pierces_mesh1)
+    if valid_intersect and not separate_surfs:
+        return (), valid_intersect
+    elif mesh1_pierces_mesh2:
         pass
     elif mesh2_pierces_mesh1:
         # Split mesh2 into two parts
@@ -214,24 +277,44 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         face_circ = np.concatenate((face[0], face[0,0:1]), axis=0)
         mesh2_face1_part = face_circ[intersected_face_inds[0]+1:intersected_face_inds[1]+1]
         mesh2_verts1_part = verts2[mesh2_face1_part]
+        # Determine which side of the mesh1 the mesh2_verts1_part are on
+        # This indicates whether this is a negative swept volume or a positive swept volume
+        mesh2_side1 = side_of_plane(mesh2_verts1_part, poly_mesh1.face_normals[0], poly_mesh1.vertices[0])
+        # Make sure all the points are on the same side of the plane
+        if not np.all(mesh2_side1 == mesh2_side1[0]):
+            # If the points are not all on the same side of the plane, then the intersection is not valid
+            raise ValueError("The intersection is not valid. The intersection points are not all on the same side of the plane")
+        mesh2_side1 = mesh2_side1[0]
         # Add the intersection points to the vertices
         mesh2_verts1 = np.concatenate((intersections[:1],mesh2_verts1_part, intersections[1:]), axis=0)
-        mesh2_faces1 = np.arange(len(mesh2_verts1), dtype=int)[None,:] # Define a single face
+        face1 = np.arange(len(mesh2_verts1), dtype=int)[None,:] # Define a single face
+
         # The second face will be from the first vertex of the face to the first intersected edge
         # with the new vertices inserted, then the remaining vertices of the face that were not intersected
         mesh2_face2_part1 = face_circ[:intersected_face_inds[0]+1]
         mesh2_face2_part2 = face_circ[intersected_face_inds[1]+1:-1]
         mesh2_verts2_part1 = verts2[mesh2_face2_part1]
         mesh2_verts2_part2 = verts2[mesh2_face2_part2]
+        # Determine which side of the mesh1 the mesh2_verts1_part are on
+        # This indicates whether this is a negative swept volume or a positive swept volume
+        mesh2_side2_part1 = side_of_plane(mesh2_verts2_part1, poly_mesh1.face_normals[0], poly_mesh1.vertices[0])
+        mesh2_side2_part2 = side_of_plane(mesh2_verts2_part2, poly_mesh1.face_normals[0], poly_mesh1.vertices[0])
+        # Make sure all the points are on the same side of the plane
+        if not np.all(mesh2_side2_part1 == mesh2_side2_part1[0]) or not np.all(mesh2_side2_part2 == mesh2_side2_part2[0]):
+            # If the points are not all on the same side of the plane, then the intersection is not valid
+            raise ValueError("The intersection is not valid. The intersection points are not all on the same side of the plane")
+        mesh2_side2 = mesh2_side2_part1[0]
+
         mesh2_verts2 = np.concatenate((mesh2_verts2_part1, intersections, mesh2_verts2_part2), axis=0)
-        mesh2_faces2 = np.arange(len(mesh2_verts2), dtype=int)[None,:] # Define a single face
+        face2 = np.arange(len(mesh2_verts2), dtype=int)[None,:] # Define a single face
         # TODO: Define mapping between the original face and the two new faces
         # Now create the two new meshes
-        mesh2_part1 = Trimesh(vertices=mesh2_verts1, faces=mesh2_faces1, face_colors=[255, 0, 0, 255])
-        mesh2_part2 = Trimesh(vertices=mesh2_verts2, faces=mesh2_faces2, face_colors=[0, 255, 0, 255],vertex_colors=[0, 0, 255, 255])
+        # mesh2_part1 = Trimesh(vertices=mesh2_verts1, faces=face1, face_colors=[255, 0, 0, 255])
+        # mesh2_part2 = Trimesh(vertices=mesh2_verts2, faces=face2, face_colors=[0, 255, 0, 255],vertex_colors=[0, 0, 255, 255])
         # Visualize the two new meshes
         # scene = trimesh.Scene([mesh2_part1, mesh2_part2])
         # scene.show()
+
         ########################################
         # Now we need to split mesh1
         # The faces will be the same as mesh2_part1, but the vertices will be different
@@ -243,7 +326,7 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         # point on the other mesh if there are numerical issues with using the transformed intersection points
         intersections_proj = (T21[:3, :3]@intersections.T + T21[:3, 3:]).T
         mesh1_verts1 = np.concatenate((intersections_proj[:1],mesh1_verts1_part, intersections_proj[1:]), axis=0)
-        mesh1_faces1 = np.arange(len(mesh1_verts1), dtype=int)[None,:] # Define a single face
+        # mesh1_faces1 = np.arange(len(mesh1_verts1), dtype=int)[None,:] # Define a single face # should be same as face1
         # Edges of the swpet volume for the first surfaces will be defined 1:1 as they are the same geometry.
         # Define the second face of mesh1
         # This is a bit more complicated since this face has been pierced and the intersection edge is in the middle
@@ -256,37 +339,38 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         mesh1_verts2_part1 = verts1[mesh1_face2_part1]
         mesh1_face2_part2 = mesh2_face2_part2
         mesh1_verts2_part2 = verts1[mesh1_face2_part2]
-        # method that includes the hole in the face. Not working for concave shapes right now
+        # method that includes the hole in the face commented out below. Not working for concave shapes right now
         # mesh1_verts2 = np.concatenate((mesh1_verts2_part1, intersections_proj[:1],
         #                                 intersections, intersections_proj[1:],mesh1_verts2_part2), axis=0)
         # Method that removes the hole in the face. This avoids the concave shape issue
         mesh1_verts2 = np.concatenate((mesh1_verts2_part1, intersections_proj, mesh1_verts2_part2), axis=0)
-        mesh1_faces2 = np.arange(len(mesh1_verts2), dtype=int)[None,:] # Define a single face
+        # mesh1_faces2 = np.arange(len(mesh1_verts2), dtype=int)[None,:] # Define a single face # should be same as face2
+
         # Now create the two new meshes
-        mesh1_part1 = Trimesh(vertices=mesh1_verts1, faces=mesh1_faces1, face_colors=[255, 0, 0, 255])
-        mesh1_part2 = Trimesh(vertices=mesh1_verts2, faces=mesh1_faces2, face_colors=[0, 255, 0, 255],vertex_colors=[0, 0, 255, 255])
+        # mesh1_part1 = Trimesh(vertices=mesh1_verts1, faces=mesh1_faces1, face_colors=[255, 0, 0, 255])
+        # mesh1_part2 = Trimesh(vertices=mesh1_verts2, faces=mesh1_faces2, face_colors=[0, 255, 0, 255],vertex_colors=[0, 0, 255, 255])
         # Visualize the two new meshes
-        # scene = trimesh.Scene([mesh1_part1, mesh1_part2])#,mesh2_part1, mesh2_part2])
+        # scene = trimesh.Scene([mesh1_part1, mesh1_part2, mesh2_part1, mesh2_part2])
         # scene.show()
 
-        # Debug mesh
-        # debug_mesh_verts = np.concatenate((intersections_proj[:1],
-        #                                 intersections, intersections_proj[1:]),axis=0)
-        # debug_mesh_faces = np.arange(len(debug_mesh_verts), dtype=int)[None,:]
-        # # flip the face so it is visible from the front
-        # debug_mesh_faces = np.fliplr(debug_mesh_faces)
-        # debug_mesh = Trimesh(vertices=debug_mesh_verts, faces=debug_mesh_faces, face_colors=[255, 0, 255, 255])
-        # scene = trimesh.Scene([debug_mesh, mesh1_part1, mesh1_part2, mesh2_part1, mesh2_part2])
-        # scene.show()
+        # TODO: figure out how to identify positive and negative sweeps given the normal maybe 
+        verts1 = np.concatenate((mesh1_verts1, mesh2_verts1), axis=0)
+        verts2 = np.concatenate((mesh1_verts2, mesh2_verts2), axis=0)
 
-        scene = trimesh.Scene([mesh1_part1, mesh1_part2, mesh2_part1, mesh2_part2])
-        scene.show()
+        assert mesh2_side1 ==  (not mesh2_side2), "mesh2_side1 must be opposite to mesh2_side2"
 
-        test=1
-
-        pass
-
-    raise NotImplementedError("Function not fully implemented yet")
+        if mesh2_side1:
+            pos_verts = verts1
+            pos_boundary = face1
+            neg_verts = verts2
+            neg_boundary = face2
+        else:
+            pos_verts = verts2
+            pos_boundary = face2
+            neg_verts = verts1
+            neg_boundary = face1
+    
+    return (pos_verts, pos_boundary, neg_verts, neg_boundary), valid_intersect
 
 
 def sweep_thin_poly_mesh(
@@ -296,6 +380,8 @@ def sweep_thin_poly_mesh(
     convex_interp: bool = True,
     cap: bool = True,
     connect: bool = True,
+    check_intersects: bool = True,
+    separate_surfs: bool = True,
     kwargs: Optional[Dict] = None,
     **triangulation,
 ) -> Trimesh:
@@ -357,12 +443,13 @@ def sweep_thin_poly_mesh(
     bnd, unique, n_unique = get_poly_mesh_boundary(poly_mesh)
     boundary = bnd["edges"]
     verts = bnd["vertices"]
+    stride = n_unique
 
     # take only the vertices in the boundary
     # and stack them with zeros and ones so we can use dot
     # products to transform them all over the place
     vertices_tf = np.column_stack(
-        (verts, np.ones(n_unique))
+        (verts, np.ones(stride))
     )
 
     # apply transforms to prebaked homogeneous coordinates
@@ -373,30 +460,45 @@ def sweep_thin_poly_mesh(
     # Add in the original vertices to the beginning of the vertices_3D array
     vertices_3D = np.concatenate((verts, vertices_3D), axis=0)
 
+    sides, intersected = side_of_surface(vertices_3D, stride)
+
     # Check for self-intersections between the slices
     # TODO: Loop through them all
     # TODO: Figure out this whole transform issue where initial mesh is translated and rotated...
     # Using unique to define the single face of the polygon (not a trimesh face, but a face of the polygon)
     # This will help us to define two new 3D faces/polygons in the case of a self-intersection
-    find_intersections(transforms[0],
-                       poly_mesh1=poly_mesh, boundary=boundary, face=unique[None,:],
-                       verts1=vertices_3D[0:n_unique],
-                       verts2 = vertices_3D[n_unique:n_unique*2])
-
+    if check_intersects:
+        # Only look for intersections where we already know they are
+        for i in np.where(intersected)[0]:
+            if i == 0:
+                poly_mesh1 = poly_mesh
+            else:
+                poly_mesh1 = None
+            intersects, valid_intersect = find_intersections(transforms[i], poly_mesh1=poly_mesh1,
+                                                              boundary=boundary, face=unique[None,:],
+                                                              verts1=vertices_3D[stride*(i):stride*(i+1)],
+                                                              verts2 = vertices_3D[stride*(i+1):stride*(i+2)],
+                                                              process=False, separate_surfs=True)
+            if valid_intersect:
+                pos_verts, pos_boundary, neg_verts, neg_boundary = intersects
+                # Track the pos_vets and neg_verts separately
+                # RESUME HERE: Need to figure out how to track the positive and negative sweeps
+                # and how to define the faces. I think i just use the below formula each time
+                # and then concatenate them to the faces array that is traced for each pos/neg sweep
+                test=1
     # now construct the faces with one group of boundary faces per slice
-    stride = n_unique
     boundary_next = boundary + stride
-    faces_slice_pos = np.column_stack(
+    faces_slice_pos_roll = np.column_stack(
         [boundary, boundary_next[:, :1], boundary_next[:, ::-1], boundary[:, 1:]]
         ).reshape((-1, 3))
-    faces_slice_neg = np.column_stack(
+    faces_slice_neg_roll = np.column_stack(
         [boundary, boundary_next[:, -1:], boundary_next[:, ::-1], boundary[:, :-1]]
         ).reshape((-1, 3))
     if not convex_interp:
         # if we're interpolating concave hulls we need to flip the sign of roll_dirs
         roll_dirs = np.logical_not(roll_dirs)
     # Select appropriate face slice based on roll direction for each slice
-    faces_slices = np.where(roll_dirs[:,None, None], faces_slice_pos[None,:,:], faces_slice_neg[None,:,:])
+    faces_slices = np.where(roll_dirs[:,None, None], faces_slice_pos_roll[None,:,:], faces_slice_neg_roll[None,:,:])
     # Now offset the faces for each slice
     offsets = (np.arange(n_sweeps) * stride)[:, None, None]
     faces = (faces_slices + offsets).reshape((-1, 3))
@@ -497,8 +599,9 @@ if __name__ == "__main__":
     T_dB = trimesh.transformations.rotation_matrix(np.radians(22), [1, 0, 0])@T_dB
     T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 1, 0])@T_dB
     T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 0, 1])@T_dB
-    roll_dirs = np.array([22]) >= 0
-    transforms = np.array([T_dB])
+    T_dB2 = trimesh.transformations.translation_matrix([-1.5, 0.0, 0.0])@T_dB
+    roll_dirs = np.array([22,0]) >= 0
+    transforms = np.array([T_dB, T_dB2])
 
     new_mesh = sweep_thin_poly_mesh(blade_mesh.apply_transform(T_BW), transforms, roll_dirs=roll_dirs, convex_interp=True, cap=True, connect=False)
     new_mesh.apply_transform(T_WB)
