@@ -199,6 +199,20 @@ def side_of_surface(points, stride):
     sides = np.all(sides, axis=1)
     return sides, intersected
 
+def simple_polygon_triangulation(n_verts):
+    # simple triangulation of the faces with cutting out slices of the shape
+    # starting with the first vertex and the next two, then the next two, etc
+    # Will only work for convex shapes not concave shapes
+    faces = np.concatenate((np.zeros((n_verts-2,1),dtype=int),np.lib.stride_tricks.sliding_window_view(np.arange(1,n_verts), 2)), axis=1)
+    return faces
+
+def boundary_edges(n_verts):
+    # Get the edges of the boundary
+    verts = np.zeros((n_verts+1),dtype=int)
+    verts[0:n_verts] = np.arange(0,n_verts)
+    edges = np.lib.stride_tricks.sliding_window_view(verts, 2)
+    return edges
+
 def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, face=None, verts1=None, verts2=None, process=False, separate_surfs=True):
     # Find the intersection between two thin convex polygon meshes
     mesh1_pierces_mesh2 = False
@@ -287,7 +301,9 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         mesh2_side1 = mesh2_side1[0]
         # Add the intersection points to the vertices
         mesh2_verts1 = np.concatenate((intersections[:1],mesh2_verts1_part, intersections[1:]), axis=0)
-        face1 = np.arange(len(mesh2_verts1), dtype=int)[None,:] # Define a single face
+        # face1 = np.arange(len(mesh2_verts1), dtype=int)[None,:] # Define a single face
+        face1 = simple_polygon_triangulation(len(mesh2_verts1))
+        boundary1 = boundary_edges(len(mesh2_verts1))
 
         # The second face will be from the first vertex of the face to the first intersected edge
         # with the new vertices inserted, then the remaining vertices of the face that were not intersected
@@ -306,7 +322,9 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         mesh2_side2 = mesh2_side2_part1[0]
 
         mesh2_verts2 = np.concatenate((mesh2_verts2_part1, intersections, mesh2_verts2_part2), axis=0)
-        face2 = np.arange(len(mesh2_verts2), dtype=int)[None,:] # Define a single face
+        # face2 = np.arange(len(mesh2_verts2), dtype=int)[None,:] # Define a single face
+        face2 = simple_polygon_triangulation(len(mesh2_verts2))
+        boundary2 = boundary_edges(len(mesh2_verts2))
         # TODO: Define mapping between the original face and the two new faces
         # Now create the two new meshes
         # mesh2_part1 = Trimesh(vertices=mesh2_verts1, faces=face1, face_colors=[255, 0, 0, 255])
@@ -361,14 +379,14 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
 
         if mesh2_side1:
             pos_verts = verts1
-            pos_boundary = face1
+            pos_boundary = boundary1
             neg_verts = verts2
-            neg_boundary = face2
+            neg_boundary = boundary2
         else:
             pos_verts = verts2
-            pos_boundary = face2
+            pos_boundary = boundary2
             neg_verts = verts1
-            neg_boundary = face1
+            neg_boundary = boundary1
     
     return (pos_verts, pos_boundary, neg_verts, neg_boundary), valid_intersect
 
@@ -403,9 +421,7 @@ def get_cap_face(boundary_edges, flip_normals=False):
     Get the faces (a single surface) of a cap for a swept volume given the boundary edges
     """
     unique = np.unique(boundary_edges.ravel())
-    # simple triangulation of the faces with cutting out slices of the shape
-    # starting with the first vertex and the next two, then the next two, etc
-    face_cap = np.concatenate((np.zeros((len(unique)-2,1),dtype=int),np.lib.stride_tricks.sliding_window_view(np.arange(1,len(unique)), 2)), axis=1)
+    face_cap = simple_polygon_triangulation(len(unique))
     if flip_normals:
         face_cap = np.fliplr(face_cap)
     return face_cap
@@ -520,16 +536,38 @@ def sweep_thin_poly_mesh(
                                                                   process=False, separate_surfs=True)
                 if valid_intersect:
                     p_verts, p_boundary, n_verts, n_boundary = intersects
-                    pos_verts.append(p_verts)
-                    n_p_verts = len(pos_verts)
-                    pos_faces.append(p_boundary)
-                    neg_verts.append(n_verts)
-                    neg_faces.append(n_boundary)
-                    # Track the pos_vets and neg_verts separately
-                    # RESUME HERE: Need to figure out how to track the positive and negative sweeps
-                    # and how to define the faces. I think i just use the below formula each time
-                    # and then concatenate them to the faces array that is traced for each pos/neg sweep
-                    test=1
+                    pos_face_sweep, n_new_pos_points = get_swept_edges(p_boundary, roll_dirs[i], convex_interp, flip_normals = False)
+                    offset = len(pos_verts)
+                    # Add the verticies for the positive sweep
+                    pos_verts = np.concatenate((pos_verts, p_verts[0:n_new_pos_points]), axis=0)
+                    # Add the start cap faces (always?)
+                    cap_face = get_cap_face(p_boundary, flip_normals = True)
+                    pos_faces = np.concatenate((pos_faces, cap_face+offset), axis=0)
+                    # Add the swept faces
+                    offset = len(pos_verts)-n_new_pos_points
+                    # TODO: Could combine with above concat
+                    pos_verts = np.concatenate((pos_verts, p_verts[n_new_pos_points:]), axis=0)
+                    pos_faces = np.concatenate((pos_faces, pos_face_sweep+offset), axis=0)
+                    # Add cap faces at the end of the sweep to close the volume
+                    cap_face = get_cap_face(p_boundary, flip_normals = False)
+                    pos_faces = np.concatenate((pos_faces, cap_face+len(pos_verts)-n_new_pos_points), axis=0)
+
+                    # Add the verticies for the negative sweep
+                    neg_face_sweep, n_new_neg_points = get_swept_edges(n_boundary, roll_dirs[i], convex_interp, flip_normals = True)
+                    offset = len(neg_verts)
+                    # Add the verticies for the negative sweep
+                    neg_verts = np.concatenate((neg_verts, n_verts[0:n_new_neg_points]), axis=0)
+                    # Add the start cap faces (always?)
+                    cap_face = get_cap_face(n_boundary, flip_normals = False)
+                    neg_faces = np.concatenate((neg_faces, cap_face+offset), axis=0)
+                    # Add the swept faces
+                    offset = len(neg_verts)-n_new_neg_points
+                    neg_verts = np.concatenate((neg_verts, n_verts[n_new_neg_points:]), axis=0)
+                    neg_faces = np.concatenate((neg_faces, neg_face_sweep+offset), axis=0)
+                    # Add cap faces at the end of the sweep to close the volume
+                    cap_face = get_cap_face(n_boundary, flip_normals = True)
+                    neg_faces = np.concatenate((neg_faces, cap_face+len(neg_verts)-n_new_neg_points), axis=0)
+
             else:
                 face_sweep, n_new_points = get_swept_edges(boundary, roll_dirs[i], convex_interp, flip_normals = not sides[i])
                 assert n_new_points == stride, "The number of new points must be equal to the stride"
@@ -539,7 +577,7 @@ def sweep_thin_poly_mesh(
                         offset = len(pos_verts)
                         pos_verts = np.concatenate((pos_verts, vertices_3D[stride*(i):stride*(i+1)]),axis=0)
                         # Add cap faces at the beginning of the sweep to close the volume on one end
-                        cap_face = get_cap_face(boundary, flip_normals = sides[i])
+                        cap_face = get_cap_face(boundary, flip_normals = True)
                         pos_faces = np.concatenate((pos_faces, cap_face+offset), axis=0)
                     offset = len(pos_verts)-stride
                     pos_verts = np.concatenate((pos_verts, vertices_3D[stride*(i+1):stride*(i+2)]),axis=0)
@@ -551,7 +589,7 @@ def sweep_thin_poly_mesh(
                         offset = len(neg_verts)
                         neg_verts = np.concatenate((neg_verts, vertices_3D[stride*(i):stride*(i+1)]),axis=0)
                         # Add cap faces at the beginning of the sweep to close the volume on one end
-                        cap_face = get_cap_face(boundary, flip_normals = sides[i])
+                        cap_face = get_cap_face(boundary, flip_normals = False)
                         neg_faces = np.concatenate((neg_faces, cap_face+offset), axis=0)
                     offset = len(neg_verts)-stride
                     neg_verts = np.concatenate((neg_verts, vertices_3D[stride*(i+1):stride*(i+2)]),axis=0)
@@ -645,17 +683,17 @@ if __name__ == "__main__":
 
     T_BW = hom_inv(T_WB)
     # Define the path of the blade
-    T_dB = trimesh.transformations.translation_matrix([1.5, -1.5, 0.0])
-    T_dB = trimesh.transformations.rotation_matrix(np.radians(-20), [1, 0, 0])@T_dB
-    T_dB = trimesh.transformations.rotation_matrix(np.radians(-10), [0, 1, 0])@T_dB
-    T_dB2 = trimesh.transformations.translation_matrix([1.5, 0.0, 0.0])@T_dB
-    T_dB3 = trimesh.transformations.translation_matrix([1.0, 0.0, 0.0])
-    # T_db3 = trimesh.transformations.rotation_matrix(np.radians(10), [1, 0, 0])@T_dB3
-    # T_dB3 = trimesh.transformations.rotation_matrix(np.radians(15), [0, 0, 1])@T_dB3@T_dB2
-    roll_dirs = np.array([-20, 0, 0]) >= 0
-    transforms = np.array([T_dB, T_dB2, T_dB3])
-    # roll_dirs = np.array([-20]) >= 0
-    # transforms = np.array([T_dB])
+    # T_dB = trimesh.transformations.translation_matrix([1.5, -1.5, 0.0])
+    # T_dB = trimesh.transformations.rotation_matrix(np.radians(-20), [1, 0, 0])@T_dB
+    # T_dB = trimesh.transformations.rotation_matrix(np.radians(-10), [0, 1, 0])@T_dB
+    # T_dB2 = trimesh.transformations.translation_matrix([1.5, 0.0, 0.0])@T_dB
+    # T_dB3 = trimesh.transformations.translation_matrix([1.0, 0.0, 0.0])
+    # # T_db3 = trimesh.transformations.rotation_matrix(np.radians(10), [1, 0, 0])@T_dB3
+    # # T_dB3 = trimesh.transformations.rotation_matrix(np.radians(15), [0, 0, 1])@T_dB3@T_dB2
+    # roll_dirs = np.array([-20, 0, 0]) >= 0
+    # transforms = np.array([T_dB, T_dB2, T_dB3])
+    # # roll_dirs = np.array([-20]) >= 0
+    # # transforms = np.array([T_dB])
 
 
     # T_dB = trimesh.transformations.rotation_matrix(np.radians(-20), [0, 0, 1])@T_BW
@@ -665,13 +703,15 @@ if __name__ == "__main__":
     # Applying T_BW to transforms so that i can apply the transforms to the blade surface
     # directly. This is because the blade surface is defined in the blade frame
     # The blade_mesh is defined in the world frame so the transform T_BW must 
-    # T_dB = trimesh.transformations.translation_matrix([0.3, 0.4, 0.2])
-    # T_dB = trimesh.transformations.rotation_matrix(np.radians(22), [1, 0, 0])@T_dB
-    # T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 1, 0])@T_dB
-    # T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 0, 1])@T_dB
+    T_dB = trimesh.transformations.translation_matrix([0.3, 0.4, 0.2])
+    T_dB = trimesh.transformations.rotation_matrix(np.radians(22), [1, 0, 0])@T_dB
+    T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 1, 0])@T_dB
+    T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 0, 1])@T_dB
     # T_dB2 = trimesh.transformations.translation_matrix([-1.5, 0.0, 0.0])@T_dB
     # roll_dirs = np.array([22,0]) >= 0
     # transforms = np.array([T_dB, T_dB2])
+    roll_dirs = np.array([22]) >= 0
+    transforms = np.array([T_dB])
 
     pos_new_mesh, neg_new_mesh = sweep_thin_poly_mesh(blade_mesh.apply_transform(T_BW), transforms, roll_dirs=roll_dirs, convex_interp=True, cap=True, connect=False)
     meshes = []
