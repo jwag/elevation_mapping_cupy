@@ -131,7 +131,7 @@ def line_mesh_intersection(line, mesh, coincidence_tol=1e-6):
             # Get the indices of the intersected lines
             intersected_lines = index_ray[on_line]
             # Get the intersection point on the line segment
-            intersections = locations[intersected_lines]
+            intersections = locations
         else:
             intersections = []
             intersected_lines = []
@@ -521,7 +521,7 @@ def sweep_thin_poly_mesh(
         pos_faces = np.empty((0,3))
         neg_verts = np.empty((0,3))
         neg_faces = np.empty((0,3))
-        last_pos_sweep, last_neg_sweep = 0, 0
+        last_pos_sweep, last_neg_sweep, lost_pos_sweep_cap_offset, lost_neg_sweep_cap_offset = 0, 0, 0, 0
         for i in range(n_sweeps):
             # Only look for intersections where we already know they are
             if intersected[i]:
@@ -583,18 +583,20 @@ def sweep_thin_poly_mesh(
                     pos_verts = np.concatenate((pos_verts, vertices_3D[stride*(i+1):stride*(i+2)]),axis=0)
                     pos_faces = np.concatenate((pos_faces, face_sweep+offset), axis=0)
                     last_pos_sweep = i+1
+                    last_pos_sweep_cap_offset = len(pos_verts) - stride
                 else:
                     # Add the past verticies if either this is the first sweep, the previous sweep was positive, or the previous sweep intersected
                     if len(neg_verts) == 0 or sides[i-1] or intersected[i-1]:
                         offset = len(neg_verts)
                         neg_verts = np.concatenate((neg_verts, vertices_3D[stride*(i):stride*(i+1)]),axis=0)
                         # Add cap faces at the beginning of the sweep to close the volume on one end
-                        cap_face = get_cap_face(boundary, flip_normals = False)
+                        cap_face = get_cap_face(boundary, flip_normals = False)# true
                         neg_faces = np.concatenate((neg_faces, cap_face+offset), axis=0)
                     offset = len(neg_verts)-stride
                     neg_verts = np.concatenate((neg_verts, vertices_3D[stride*(i+1):stride*(i+2)]),axis=0)
                     neg_faces = np.concatenate((neg_faces, face_sweep+offset), axis=0)
                     last_neg_sweep = i+1
+                    last_neg_sweep_cap_offset = len(neg_verts) - stride
 
         # Cap Faces of both volumes
         # Only cap the end of the positive sweep if the last sweep was positive
@@ -602,10 +604,10 @@ def sweep_thin_poly_mesh(
         if len(pos_verts) != 0 and last_pos_sweep != 0 and last_pos_sweep == n_sweeps:
             # Handle differently if dealing with intersections
             cap_face = get_cap_face(boundary, flip_normals = False)
-            pos_faces = np.concatenate((pos_faces, cap_face+len(pos_verts)-stride*last_pos_sweep), axis=0)
+            pos_faces = np.concatenate((pos_faces, cap_face+last_pos_sweep_cap_offset), axis=0)
         elif len(neg_verts) != 0 and last_neg_sweep != 0 and last_neg_sweep == n_sweeps:
             cap_face = get_cap_face(boundary, flip_normals = True)
-            neg_faces = np.concatenate((neg_faces, cap_face+len(neg_verts)-stride*last_neg_sweep), axis=0)
+            neg_faces = np.concatenate((neg_faces, cap_face+last_neg_sweep_cap_offset), axis=0)
 
 
     # # Cap the ends of the swept volumes
@@ -688,9 +690,9 @@ if __name__ == "__main__":
     # T_dB = trimesh.transformations.rotation_matrix(np.radians(-10), [0, 1, 0])@T_dB
     # T_dB2 = trimesh.transformations.translation_matrix([1.5, 0.0, 0.0])@T_dB
     # T_dB3 = trimesh.transformations.translation_matrix([1.0, 0.0, 0.0])
-    # # T_db3 = trimesh.transformations.rotation_matrix(np.radians(10), [1, 0, 0])@T_dB3
-    # # T_dB3 = trimesh.transformations.rotation_matrix(np.radians(15), [0, 0, 1])@T_dB3@T_dB2
-    # roll_dirs = np.array([-20, 0, 0]) >= 0
+    # T_db3 = trimesh.transformations.rotation_matrix(np.radians(10), [1, 0, 0])@T_dB3
+    # T_dB3 = trimesh.transformations.rotation_matrix(np.radians(15), [0, 0, 1])@T_dB3@T_dB2
+    # roll_dirs = np.array([-20, 0, 10]) >= 0
     # transforms = np.array([T_dB, T_dB2, T_dB3])
     # # roll_dirs = np.array([-20]) >= 0
     # # transforms = np.array([T_dB])
@@ -707,11 +709,11 @@ if __name__ == "__main__":
     T_dB = trimesh.transformations.rotation_matrix(np.radians(22), [1, 0, 0])@T_dB
     T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 1, 0])@T_dB
     T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 0, 1])@T_dB
-    # T_dB2 = trimesh.transformations.translation_matrix([-1.5, 0.0, 0.0])@T_dB
-    # roll_dirs = np.array([22,0]) >= 0
-    # transforms = np.array([T_dB, T_dB2])
-    roll_dirs = np.array([22]) >= 0
-    transforms = np.array([T_dB])
+    T_dB2 = trimesh.transformations.translation_matrix([-1.5, 0.0, 0.0])@T_dB
+    roll_dirs = np.array([22,0]) >= 0
+    transforms = np.array([T_dB, T_dB2])
+    # roll_dirs = np.array([22]) >= 0
+    # transforms = np.array([T_dB])
 
     pos_new_mesh, neg_new_mesh = sweep_thin_poly_mesh(blade_mesh.apply_transform(T_BW), transforms, roll_dirs=roll_dirs, convex_interp=True, cap=True, connect=False)
     meshes = []
