@@ -213,6 +213,134 @@ def boundary_edges(n_verts):
     edges = np.lib.stride_tricks.sliding_window_view(verts, 2)
     return edges
 
+def split_intersected_meshes(face, intersections, intersected_edges, piercing_verts, pierced_verts, pierced_mesh, T_piercing_pierced):
+    # Pierced mesh is the mesh that is being pierced by the piercing mesh, i.e. it creates a line of intersection in the middle of the face
+    # of the pierced mesh. Both meshes must be split into two parts to create a positive and negative swept volume.
+
+    # Convenience function
+    def find_intersected_face_inds(face, intersected_edges):
+        # Find the indices of the intersected edges in the face
+        intersected_face_inds = np.zeros(len(intersected_edges), dtype=int)
+        # Add the first vertex to the end of the face to make it a closed loop
+        face_circ = np.concatenate((face[0], face[0,0:1]), axis=0)
+        for e, edge in enumerate(intersected_edges):
+            # TODO: May have to deal with inverted edges too
+                for i in np.arange(len(face_circ)-1):
+                    if np.all(face_circ[i:i+2] == edge):
+                        # This face contains the intersected edge
+                        intersected_face_inds[e] = i
+        return intersected_face_inds
+    
+    # First split piercing_mesh into two parts
+    # Let us add the intersection points as vertices to the mesh
+    # Find the face that contain the intersected edges
+    # Determine where to split face based on the intersected edges
+    intersected_face_inds = find_intersected_face_inds(face, intersected_edges)
+    # The face now needs split into two faces
+    # The first face will start with the first intersection point, include points from the face
+    # between the first and second intersection points, and end with the second intersection point
+    face_circ = np.concatenate((face[0], face[0,0:1]), axis=0)
+    piercing_mesh_face1_part = face_circ[intersected_face_inds[0]+1:intersected_face_inds[1]+1]
+    piercing_mesh_verts1_part = piercing_verts[piercing_mesh_face1_part]
+    # Determine which side of the mesh1 the piercing_mesh_verts1_part are on
+    # This indicates whether this is a negative swept volume or a positive swept volume
+    piercing_mesh_side1 = side_of_plane(piercing_mesh_verts1_part, pierced_mesh.face_normals[0], pierced_mesh.vertices[0])
+    # Make sure all the points are on the same side of the plane
+    if not np.all(piercing_mesh_side1 == piercing_mesh_side1[0]):
+        # If the points are not all on the same side of the plane, then the intersection is not valid
+        raise ValueError("The intersection is not valid. The intersection points are not all on the same side of the plane")
+    piercing_mesh_side1 = piercing_mesh_side1[0]
+    # Add the intersection points to the vertices
+    piercing_mesh_verts1 = np.concatenate((intersections[:1],piercing_mesh_verts1_part, intersections[1:]), axis=0)
+    # face1 = np.arange(len(piercing_mesh_verts1), dtype=int)[None,:] # Define a single face
+    face1 = simple_polygon_triangulation(len(piercing_mesh_verts1))
+    boundary1 = boundary_edges(len(piercing_mesh_verts1))
+
+    # The second face will be from the first vertex of the face to the first intersected edge
+    # with the new vertices inserted, then the remaining vertices of the face that were not intersected
+    piercing_mesh_face2_part1 = face_circ[:intersected_face_inds[0]+1]
+    piercing_mesh_face2_part2 = face_circ[intersected_face_inds[1]+1:-1]
+    piercing_mesh_verts2_part1 = piercing_verts[piercing_mesh_face2_part1]
+    piercing_mesh_verts2_part2 = piercing_verts[piercing_mesh_face2_part2]
+    # Determine which side of the mesh1 the piercing_mesh_verts1_part are on
+    # This indicates whether this is a negative swept volume or a positive swept volume
+    piercing_mesh_side2_part1 = side_of_plane(piercing_mesh_verts2_part1, pierced_mesh.face_normals[0], pierced_mesh.vertices[0])
+    piercing_mesh_side2_part2 = side_of_plane(piercing_mesh_verts2_part2, pierced_mesh.face_normals[0], pierced_mesh.vertices[0])
+    # Make sure all the points are on the same side of the plane
+    if not np.all(piercing_mesh_side2_part1 == piercing_mesh_side2_part1[0]) or not np.all(piercing_mesh_side2_part2 == piercing_mesh_side2_part2[0]):
+        # If the points are not all on the same side of the plane, then the intersection is not valid
+        raise ValueError("The intersection is not valid. The intersection points are not all on the same side of the plane")
+    piercing_mesh_side2 = piercing_mesh_side2_part1[0]
+
+    piercing_mesh_verts2 = np.concatenate((piercing_mesh_verts2_part1, intersections, piercing_mesh_verts2_part2), axis=0)
+    # face2 = np.arange(len(piercing_mesh_verts2), dtype=int)[None,:] # Define a single face
+    face2 = simple_polygon_triangulation(len(piercing_mesh_verts2))
+    boundary2 = boundary_edges(len(piercing_mesh_verts2))
+    # TODO: Define mapping between the original face and the two new faces
+    # Now create the two new meshes
+    # piercing_mesh_part1 = Trimesh(vertices=piercing_mesh_verts1, faces=face1, face_colors=[255, 0, 0, 255])
+    # piercing_mesh_part2 = Trimesh(vertices=piercing_mesh_verts2, faces=face2, face_colors=[0, 255, 0, 255],vertex_colors=[0, 0, 255, 255])
+    # Visualize the two new meshes
+    # scene = trimesh.Scene([piercing_mesh_part1, piercing_mesh_part2])
+    # scene.show()
+
+    ########################################
+    # Now we need to split mesh1
+    # The faces will be the same as piercing_mesh_part1, but the vertices will be different
+    pierced_mesh_face1_part = piercing_mesh_face1_part
+    pierced_mesh_verts1_part = pierced_verts[pierced_mesh_face1_part]
+    # Add the intersection points to the vertices
+    # T21 = hom_inv(T12)
+    # May need to use the length along the ray to determine the corresponding intersection
+    # point on the other mesh if there are numerical issues with using the transformed intersection points
+    intersections_proj = (T_piercing_pierced[:3, :3]@intersections.T + T_piercing_pierced[:3, 3:]).T
+    pierced_mesh_verts1 = np.concatenate((intersections_proj[:1],pierced_mesh_verts1_part, intersections_proj[1:]), axis=0)
+    # pierced_mesh_faces1 = np.arange(len(pierced_mesh_verts1), dtype=int)[None,:] # Define a single face # should be same as face1
+    # Edges of the swpet volume for the first surfaces will be defined 1:1 as they are the same geometry.
+    # Define the second face of mesh1
+    # This is a bit more complicated since this face has been pierced and the intersection edge is in the middle
+    # of the face. If we treated this as one surface, then this shape would be concave and not convex.
+    # This means that specifying the face as a single face would not work as the triangulation does not support
+    # concave shapes. Alternatively, we could not remove this hole in the face between intersectons and intersections_proj.
+    # Then the face would be convex and mirror that of piercing_mesh_part2. The other solution is to triangulate the concave
+    # shape using trimesh.creation.triangulate_polygon() for example.
+    pierced_mesh_face2_part1 = piercing_mesh_face2_part1
+    pierced_mesh_verts2_part1 = pierced_verts[pierced_mesh_face2_part1]
+    pierced_mesh_face2_part2 = piercing_mesh_face2_part2
+    pierced_mesh_verts2_part2 = pierced_verts[pierced_mesh_face2_part2]
+    # method that includes the hole in the face commented out below. Not working for concave shapes right now
+    # pierced_mesh_verts2 = np.concatenate((pierced_mesh_verts2_part1, intersections_proj[:1],
+    #                                 intersections, intersections_proj[1:],pierced_mesh_verts2_part2), axis=0)
+    # Method that removes the hole in the face. This avoids the concave shape issue
+    pierced_mesh_verts2 = np.concatenate((pierced_mesh_verts2_part1, intersections_proj, pierced_mesh_verts2_part2), axis=0)
+    # pierced_mesh_faces2 = np.arange(len(pierced_mesh_verts2), dtype=int)[None,:] # Define a single face # should be same as face2
+
+    # Now create the two new meshes
+    # pierced_mesh_part1 = Trimesh(vertices=pierced_mesh_verts1, faces=pierced_mesh_faces1, face_colors=[255, 0, 0, 255])
+    # pierced_mesh_part2 = Trimesh(vertices=pierced_mesh_verts2, faces=pierced_mesh_faces2, face_colors=[0, 255, 0, 255],vertex_colors=[0, 0, 255, 255])
+    # Visualize the two new meshes
+    # scene = trimesh.Scene([pierced_mesh_part1, pierced_mesh_part2, piercing_mesh_part1, piercing_mesh_part2])
+    # scene.show()
+
+    # TODO: figure out how to identify positive and negative sweeps given the normal maybe 
+    verts1 = np.concatenate((pierced_mesh_verts1, piercing_mesh_verts1), axis=0)
+    verts2 = np.concatenate((pierced_mesh_verts2, piercing_mesh_verts2), axis=0)
+
+    assert piercing_mesh_side1 ==  (not piercing_mesh_side2), "piercing_mesh_side1 must be opposite to piercing_mesh_side2"
+
+    if piercing_mesh_side1:
+        pos_verts = verts1
+        pos_boundary = boundary1
+        neg_verts = verts2
+        neg_boundary = boundary2
+    else:
+        pos_verts = verts2
+        pos_boundary = boundary2
+        neg_verts = verts1
+        neg_boundary = boundary1
+    
+    return pos_verts, pos_boundary, neg_verts, neg_boundary
+
 def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, face=None, verts1=None, verts2=None, process=False, separate_surfs=True):
     # Find the intersection between two thin convex polygon meshes
     mesh1_pierces_mesh2 = False
@@ -262,7 +390,11 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
     if valid_intersect and not separate_surfs:
         return (), valid_intersect
     elif mesh1_pierces_mesh2:
-        pass
+        print("Mesh1 pierces Mesh2")
+        intersected_edges = boundary[intersected_lines]
+        pos_verts, pos_boundary, neg_verts, neg_boundary = split_intersected_meshes(face, intersections, intersected_edges,
+                                                                                    piercing_verts=verts1, pierced_verts=verts2,
+                                                                                    pierced_mesh=poly_mesh2, T_piercing_pierced = T12)
     elif mesh2_pierces_mesh1:
         # Split mesh2 into two parts
         print("Mesh2 pierces Mesh1")
@@ -270,123 +402,9 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         # Add the intersection points to the mesh
         # The suffix indicates wheter or not the mesh is on the pierced side or the piercing side
         intersected_edges = boundary[intersected_lines]
-        # Find the face that contain the intersected edges
-        # Determine where to split face based on the intersected edges
-        def find_intersected_face_inds(face, intersected_edges):
-            # Find the indices of the intersected edges in the face
-            intersected_face_inds = np.zeros(len(intersected_edges), dtype=int)
-            # Add the first vertex to the end of the face to make it a closed loop
-            face_circ = np.concatenate((face[0], face[0,0:1]), axis=0)
-            for e, edge in enumerate(intersected_edges):
-                # TODO: May have to deal with inverted edges too
-                    for i in np.arange(len(face_circ)-1):
-                        if np.all(face_circ[i:i+2] == edge):
-                            # This face contains the intersected edge
-                            intersected_face_inds[e] = i
-            return intersected_face_inds
-        intersected_face_inds = find_intersected_face_inds(face, intersected_edges)
-        # The face now needs split into two faces
-        # The first face will start with the first intersection point, include points from the face
-        # between the first and second intersection points, and end with the second intersection point
-        face_circ = np.concatenate((face[0], face[0,0:1]), axis=0)
-        mesh2_face1_part = face_circ[intersected_face_inds[0]+1:intersected_face_inds[1]+1]
-        mesh2_verts1_part = verts2[mesh2_face1_part]
-        # Determine which side of the mesh1 the mesh2_verts1_part are on
-        # This indicates whether this is a negative swept volume or a positive swept volume
-        mesh2_side1 = side_of_plane(mesh2_verts1_part, poly_mesh1.face_normals[0], poly_mesh1.vertices[0])
-        # Make sure all the points are on the same side of the plane
-        if not np.all(mesh2_side1 == mesh2_side1[0]):
-            # If the points are not all on the same side of the plane, then the intersection is not valid
-            raise ValueError("The intersection is not valid. The intersection points are not all on the same side of the plane")
-        mesh2_side1 = mesh2_side1[0]
-        # Add the intersection points to the vertices
-        mesh2_verts1 = np.concatenate((intersections[:1],mesh2_verts1_part, intersections[1:]), axis=0)
-        # face1 = np.arange(len(mesh2_verts1), dtype=int)[None,:] # Define a single face
-        face1 = simple_polygon_triangulation(len(mesh2_verts1))
-        boundary1 = boundary_edges(len(mesh2_verts1))
-
-        # The second face will be from the first vertex of the face to the first intersected edge
-        # with the new vertices inserted, then the remaining vertices of the face that were not intersected
-        mesh2_face2_part1 = face_circ[:intersected_face_inds[0]+1]
-        mesh2_face2_part2 = face_circ[intersected_face_inds[1]+1:-1]
-        mesh2_verts2_part1 = verts2[mesh2_face2_part1]
-        mesh2_verts2_part2 = verts2[mesh2_face2_part2]
-        # Determine which side of the mesh1 the mesh2_verts1_part are on
-        # This indicates whether this is a negative swept volume or a positive swept volume
-        mesh2_side2_part1 = side_of_plane(mesh2_verts2_part1, poly_mesh1.face_normals[0], poly_mesh1.vertices[0])
-        mesh2_side2_part2 = side_of_plane(mesh2_verts2_part2, poly_mesh1.face_normals[0], poly_mesh1.vertices[0])
-        # Make sure all the points are on the same side of the plane
-        if not np.all(mesh2_side2_part1 == mesh2_side2_part1[0]) or not np.all(mesh2_side2_part2 == mesh2_side2_part2[0]):
-            # If the points are not all on the same side of the plane, then the intersection is not valid
-            raise ValueError("The intersection is not valid. The intersection points are not all on the same side of the plane")
-        mesh2_side2 = mesh2_side2_part1[0]
-
-        mesh2_verts2 = np.concatenate((mesh2_verts2_part1, intersections, mesh2_verts2_part2), axis=0)
-        # face2 = np.arange(len(mesh2_verts2), dtype=int)[None,:] # Define a single face
-        face2 = simple_polygon_triangulation(len(mesh2_verts2))
-        boundary2 = boundary_edges(len(mesh2_verts2))
-        # TODO: Define mapping between the original face and the two new faces
-        # Now create the two new meshes
-        # mesh2_part1 = Trimesh(vertices=mesh2_verts1, faces=face1, face_colors=[255, 0, 0, 255])
-        # mesh2_part2 = Trimesh(vertices=mesh2_verts2, faces=face2, face_colors=[0, 255, 0, 255],vertex_colors=[0, 0, 255, 255])
-        # Visualize the two new meshes
-        # scene = trimesh.Scene([mesh2_part1, mesh2_part2])
-        # scene.show()
-
-        ########################################
-        # Now we need to split mesh1
-        # The faces will be the same as mesh2_part1, but the vertices will be different
-        mesh1_face1_part = mesh2_face1_part
-        mesh1_verts1_part = verts1[mesh1_face1_part]
-        # Add the intersection points to the vertices
-        T21 = hom_inv(T12)
-        # May need to use the length along the ray to determine the corresponding intersection
-        # point on the other mesh if there are numerical issues with using the transformed intersection points
-        intersections_proj = (T21[:3, :3]@intersections.T + T21[:3, 3:]).T
-        mesh1_verts1 = np.concatenate((intersections_proj[:1],mesh1_verts1_part, intersections_proj[1:]), axis=0)
-        # mesh1_faces1 = np.arange(len(mesh1_verts1), dtype=int)[None,:] # Define a single face # should be same as face1
-        # Edges of the swpet volume for the first surfaces will be defined 1:1 as they are the same geometry.
-        # Define the second face of mesh1
-        # This is a bit more complicated since this face has been pierced and the intersection edge is in the middle
-        # of the face. If we treated this as one surface, then this shape would be concave and not convex.
-        # This means that specifying the face as a single face would not work as the triangulation does not support
-        # concave shapes. Alternatively, we could not remove this hole in the face between intersectons and intersections_proj.
-        # Then the face would be convex and mirror that of mesh2_part2. The other solution is to triangulate the concave
-        # shape using trimesh.creation.triangulate_polygon() for example.
-        mesh1_face2_part1 = mesh2_face2_part1
-        mesh1_verts2_part1 = verts1[mesh1_face2_part1]
-        mesh1_face2_part2 = mesh2_face2_part2
-        mesh1_verts2_part2 = verts1[mesh1_face2_part2]
-        # method that includes the hole in the face commented out below. Not working for concave shapes right now
-        # mesh1_verts2 = np.concatenate((mesh1_verts2_part1, intersections_proj[:1],
-        #                                 intersections, intersections_proj[1:],mesh1_verts2_part2), axis=0)
-        # Method that removes the hole in the face. This avoids the concave shape issue
-        mesh1_verts2 = np.concatenate((mesh1_verts2_part1, intersections_proj, mesh1_verts2_part2), axis=0)
-        # mesh1_faces2 = np.arange(len(mesh1_verts2), dtype=int)[None,:] # Define a single face # should be same as face2
-
-        # Now create the two new meshes
-        # mesh1_part1 = Trimesh(vertices=mesh1_verts1, faces=mesh1_faces1, face_colors=[255, 0, 0, 255])
-        # mesh1_part2 = Trimesh(vertices=mesh1_verts2, faces=mesh1_faces2, face_colors=[0, 255, 0, 255],vertex_colors=[0, 0, 255, 255])
-        # Visualize the two new meshes
-        # scene = trimesh.Scene([mesh1_part1, mesh1_part2, mesh2_part1, mesh2_part2])
-        # scene.show()
-
-        # TODO: figure out how to identify positive and negative sweeps given the normal maybe 
-        verts1 = np.concatenate((mesh1_verts1, mesh2_verts1), axis=0)
-        verts2 = np.concatenate((mesh1_verts2, mesh2_verts2), axis=0)
-
-        assert mesh2_side1 ==  (not mesh2_side2), "mesh2_side1 must be opposite to mesh2_side2"
-
-        if mesh2_side1:
-            pos_verts = verts1
-            pos_boundary = boundary1
-            neg_verts = verts2
-            neg_boundary = boundary2
-        else:
-            pos_verts = verts2
-            pos_boundary = boundary2
-            neg_verts = verts1
-            neg_boundary = boundary1
+        pos_verts, pos_boundary, neg_verts, neg_boundary = split_intersected_meshes(face, intersections, intersected_edges,
+                                                                                    piercing_verts=verts2, pierced_verts=verts1,
+                                                                                    pierced_mesh=poly_mesh1, T_piercing_pierced = hom_inv(T12))
     
     return (pos_verts, pos_boundary, neg_verts, neg_boundary), valid_intersect
 
@@ -709,11 +727,14 @@ if __name__ == "__main__":
     T_dB = trimesh.transformations.rotation_matrix(np.radians(22), [1, 0, 0])@T_dB
     T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 1, 0])@T_dB
     T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 0, 1])@T_dB
-    T_dB2 = trimesh.transformations.translation_matrix([-1.5, 0.0, 0.0])@T_dB
-    roll_dirs = np.array([22,0]) >= 0
-    transforms = np.array([T_dB, T_dB2])
+    # T_dB2 = trimesh.transformations.translation_matrix([-1.5, 0.0, 0.0])@T_dB
+    # roll_dirs = np.array([22,0]) >= 0
+    # transforms = np.array([T_dB, T_dB2])
     # roll_dirs = np.array([22]) >= 0
     # transforms = np.array([T_dB])
+    # Flipping direction to test mesh 1 piercing mesh 2
+    roll_dirs = np.array([-22]) >= 0
+    transforms = np.array([hom_inv(T_dB)])
 
     pos_new_mesh, neg_new_mesh = sweep_thin_poly_mesh(blade_mesh.apply_transform(T_BW), transforms, roll_dirs=roll_dirs, convex_interp=True, cap=True, connect=False)
     meshes = []
