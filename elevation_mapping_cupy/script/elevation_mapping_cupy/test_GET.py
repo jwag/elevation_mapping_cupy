@@ -5,6 +5,8 @@ from trimesh.base import Trimesh
 from trimesh import grouping, util
 from trimesh.typed import ArrayLike, Dict, Optional
 from trimesh.constants import tol
+import time
+import warnings
 
 # Define GET Geometry and Sequence of thin 4 point polygons
 # using the trimesh library
@@ -270,7 +272,13 @@ def split_intersected_meshes(face, intersections, intersected_edges, piercing_ve
     piercing_mesh_side2_part1 = side_of_plane(piercing_mesh_verts2_part1, pierced_mesh.face_normals[0], pierced_mesh.vertices[0])
     piercing_mesh_side2_part2 = side_of_plane(piercing_mesh_verts2_part2, pierced_mesh.face_normals[0], pierced_mesh.vertices[0])
     # Make sure all the points are on the same side of the plane
-    if not np.all(piercing_mesh_side2_part1 == piercing_mesh_side2_part1[0]) or not np.all(piercing_mesh_side2_part2 == piercing_mesh_side2_part2[0]):
+    part1_invalid = False
+    part2_invalid = False
+    if piercing_mesh_side2_part1.shape[0] !=0:
+        part1_invalid =  (not np.all(piercing_mesh_side2_part1 == piercing_mesh_side2_part1[0]))
+    if piercing_mesh_side2_part2.shape[0] != 0:
+        part2_invalid = (not np.all(piercing_mesh_side2_part2 == piercing_mesh_side2_part2[0]))
+    if part1_invalid or part2_invalid:
         # If the points are not all on the same side of the plane, then the intersection is not valid
         raise ValueError("The intersection is not valid. The intersection points are not all on the same side of the plane")
     piercing_mesh_side2 = piercing_mesh_side2_part1[0]
@@ -510,11 +518,8 @@ def get_cap_face(boundary_edges, flip_normals=False):
 def sweep_thin_poly_mesh(
     poly_mesh: Trimesh,
     transforms: ArrayLike,
-    roll_dirs: ArrayLike,
+    roll_dirs: ArrayLike = None,
     convex_interp: bool = True,
-    cap: bool = True,
-    check_intersects: bool = True,
-    separate_surfs: bool = True,
     alpha: int = 255,
     kwargs: Optional[Dict] = None,
     **triangulation,
@@ -562,11 +567,10 @@ def sweep_thin_poly_mesh(
         raise ValueError("transforms must be (n, 4, 4)!")
     
     n_sweeps = len(transforms)
-
-    # check to see if path is closed i.e. first and last vertex are the same
-    closed = np.linalg.norm(transforms[0] - transforms[-1]) < tol.merge
-    # Extract 2D vertices and triangulation
-    org_faces = poly_mesh.faces
+    if roll_dirs is None:
+        roll_dirs = np.ones(n_sweeps, dtype=bool)
+        warnings.warn("roll_dirs not provided. Assuming all rolls are positive.")
+    assert len(roll_dirs) == n_sweeps, "roll_dirs must be the same length as transforms"
     
     # Get boundary of the polygon
     bnd, unique, n_unique = get_poly_mesh_boundary(poly_mesh)
@@ -606,99 +610,101 @@ def sweep_thin_poly_mesh(
     # TODO: Figure out this whole transform issue where initial mesh is translated and rotated...
     # Using unique to define the single face of the polygon (not a trimesh face, but a face of the polygon)
     # This will help us to define two new 3D faces/polygons in the case of a self-intersection
-    if check_intersects:
-        # Intializations
-        pos_verts = np.empty((0,3))
-        pos_faces = np.empty((0,3))
-        neg_verts = np.empty((0,3))
-        neg_faces = np.empty((0,3))
-        last_pos_sweep, last_neg_sweep, lost_pos_sweep_cap_offset, lost_neg_sweep_cap_offset = 0, 0, 0, 0
-        for i in range(n_sweeps):
-            # Only look for intersections where we already know they are
-            if intersected[i]:
-                if i == 0:
-                    poly_mesh1 = poly_mesh
-                else:
-                    poly_mesh1 = None
-                intersects, valid_intersect = find_intersections(transforms[i], poly_mesh1=poly_mesh1,
-                                                                  boundary=boundary, face=unique[None,:],
-                                                                  verts1=vertices_3D[stride*(i):stride*(i+1)],
-                                                                  verts2 = vertices_3D[stride*(i+1):stride*(i+2)],
-                                                                  process=False, separate_surfs=True)
-                if valid_intersect:
-                    p_verts, p_boundary, n_verts, n_boundary = intersects
-                    pos_face_sweep, n_new_pos_points = get_swept_edges(p_boundary, roll_dirs[i], convex_interp, flip_normals = False)
-                    offset = len(pos_verts)
-                    # Add the verticies for the positive sweep
-                    pos_verts = np.concatenate((pos_verts, p_verts[0:n_new_pos_points]), axis=0)
-                    # Add the start cap faces (always?)
-                    cap_face = get_cap_face(p_boundary, flip_normals = True)
-                    pos_faces = np.concatenate((pos_faces, cap_face+offset), axis=0)
-                    # Add the swept faces
-                    offset = len(pos_verts)-n_new_pos_points
-                    # TODO: Could combine with above concat
-                    pos_verts = np.concatenate((pos_verts, p_verts[n_new_pos_points:]), axis=0)
-                    pos_faces = np.concatenate((pos_faces, pos_face_sweep+offset), axis=0)
-                    # Add cap faces at the end of the sweep to close the volume
-                    cap_face = get_cap_face(p_boundary, flip_normals = False)
-                    pos_faces = np.concatenate((pos_faces, cap_face+len(pos_verts)-n_new_pos_points), axis=0)
-
-                    # Add the verticies for the negative sweep
-                    neg_face_sweep, n_new_neg_points = get_swept_edges(n_boundary, roll_dirs[i], convex_interp, flip_normals = True)
-                    offset = len(neg_verts)
-                    # Add the verticies for the negative sweep
-                    neg_verts = np.concatenate((neg_verts, n_verts[0:n_new_neg_points]), axis=0)
-                    # Add the start cap faces (always?)
-                    cap_face = get_cap_face(n_boundary, flip_normals = False)
-                    neg_faces = np.concatenate((neg_faces, cap_face+offset), axis=0)
-                    # Add the swept faces
-                    offset = len(neg_verts)-n_new_neg_points
-                    neg_verts = np.concatenate((neg_verts, n_verts[n_new_neg_points:]), axis=0)
-                    neg_faces = np.concatenate((neg_faces, neg_face_sweep+offset), axis=0)
-                    # Add cap faces at the end of the sweep to close the volume
-                    cap_face = get_cap_face(n_boundary, flip_normals = True)
-                    neg_faces = np.concatenate((neg_faces, cap_face+len(neg_verts)-n_new_neg_points), axis=0)
-
+    # Intializations
+    pos_verts = np.empty((0,3))
+    pos_faces = np.empty((0,3))
+    neg_verts = np.empty((0,3))
+    neg_faces = np.empty((0,3))
+    last_pos_sweep, last_neg_sweep, lost_pos_sweep_cap_offset, lost_neg_sweep_cap_offset = 0, 0, 0, 0
+    # TODO: Add functionality to do all sweeps in parallel (as is in the original function)
+    # This could speed up things in the case that there are no intersections and the movement is assumed to be 
+    # all positive or negative
+    for i in range(n_sweeps):
+        # Only look for intersections where we already know they are
+        if intersected[i]:
+            if i == 0:
+                poly_mesh1 = poly_mesh
             else:
-                face_sweep, n_new_points = get_swept_edges(boundary, roll_dirs[i], convex_interp, flip_normals = not sides[i])
-                assert n_new_points == stride, "The number of new points must be equal to the stride"
-                if sides[i]:
-                    # Add the past verticies if either this is the first sweep, the previous sweep was negative, or the previous sweep intersected
-                    if len(pos_verts) == 0 or not sides[i-1] or intersected[i-1]:
-                        offset = len(pos_verts)
-                        pos_verts = np.concatenate((pos_verts, vertices_3D[stride*(i):stride*(i+1)]),axis=0)
-                        # Add cap faces at the beginning of the sweep to close the volume on one end
-                        cap_face = get_cap_face(boundary, flip_normals = True)
-                        pos_faces = np.concatenate((pos_faces, cap_face+offset), axis=0)
-                    offset = len(pos_verts)-stride
-                    pos_verts = np.concatenate((pos_verts, vertices_3D[stride*(i+1):stride*(i+2)]),axis=0)
-                    pos_faces = np.concatenate((pos_faces, face_sweep+offset), axis=0)
-                    last_pos_sweep = i+1
-                    last_pos_sweep_cap_offset = len(pos_verts) - stride
-                else:
-                    # Add the past verticies if either this is the first sweep, the previous sweep was positive, or the previous sweep intersected
-                    if len(neg_verts) == 0 or sides[i-1] or intersected[i-1]:
-                        offset = len(neg_verts)
-                        neg_verts = np.concatenate((neg_verts, vertices_3D[stride*(i):stride*(i+1)]),axis=0)
-                        # Add cap faces at the beginning of the sweep to close the volume on one end
-                        cap_face = get_cap_face(boundary, flip_normals = False)# true
-                        neg_faces = np.concatenate((neg_faces, cap_face+offset), axis=0)
-                    offset = len(neg_verts)-stride
-                    neg_verts = np.concatenate((neg_verts, vertices_3D[stride*(i+1):stride*(i+2)]),axis=0)
-                    neg_faces = np.concatenate((neg_faces, face_sweep+offset), axis=0)
-                    last_neg_sweep = i+1
-                    last_neg_sweep_cap_offset = len(neg_verts) - stride
+                poly_mesh1 = None
+            intersects, valid_intersect = find_intersections(transforms[i], poly_mesh1=poly_mesh1,
+                                                              boundary=boundary, face=unique[None,:],
+                                                              verts1=vertices_3D[stride*(i):stride*(i+1)],
+                                                              verts2 = vertices_3D[stride*(i+1):stride*(i+2)],
+                                                              process=False, separate_surfs=True)
+            if valid_intersect:
+                p_verts, p_boundary, n_verts, n_boundary = intersects
+                pos_face_sweep, n_new_pos_points = get_swept_edges(p_boundary, roll_dirs[i], convex_interp, flip_normals = False)
+                offset = len(pos_verts)
+                # Add the verticies for the positive sweep
+                pos_verts = np.concatenate((pos_verts, p_verts[0:n_new_pos_points]), axis=0)
+                # Add the start cap faces (always?)
+                cap_face = get_cap_face(p_boundary, flip_normals = True)
+                pos_faces = np.concatenate((pos_faces, cap_face+offset), axis=0)
+                # Add the swept faces
+                offset = len(pos_verts)-n_new_pos_points
+                # TODO: Could combine with above concat
+                pos_verts = np.concatenate((pos_verts, p_verts[n_new_pos_points:]), axis=0)
+                pos_faces = np.concatenate((pos_faces, pos_face_sweep+offset), axis=0)
+                # Add cap faces at the end of the sweep to close the volume
+                cap_face = get_cap_face(p_boundary, flip_normals = False)
+                pos_faces = np.concatenate((pos_faces, cap_face+len(pos_verts)-n_new_pos_points), axis=0)
 
-        # Cap Faces of both volumes
-        # Only cap the end of the positive sweep if the last sweep was positive
-        # otherwise, the cap face will be added when the negative sweep is added
-        if len(pos_verts) != 0 and last_pos_sweep != 0 and last_pos_sweep == n_sweeps:
-            # Handle differently if dealing with intersections
-            cap_face = get_cap_face(boundary, flip_normals = False)
-            pos_faces = np.concatenate((pos_faces, cap_face+last_pos_sweep_cap_offset), axis=0)
-        elif len(neg_verts) != 0 and last_neg_sweep != 0 and last_neg_sweep == n_sweeps:
-            cap_face = get_cap_face(boundary, flip_normals = True)
-            neg_faces = np.concatenate((neg_faces, cap_face+last_neg_sweep_cap_offset), axis=0)
+                # Add the verticies for the negative sweep
+                neg_face_sweep, n_new_neg_points = get_swept_edges(n_boundary, roll_dirs[i], convex_interp, flip_normals = True)
+                offset = len(neg_verts)
+                # Add the verticies for the negative sweep
+                neg_verts = np.concatenate((neg_verts, n_verts[0:n_new_neg_points]), axis=0)
+                # Add the start cap faces (always?)
+                cap_face = get_cap_face(n_boundary, flip_normals = False)
+                neg_faces = np.concatenate((neg_faces, cap_face+offset), axis=0)
+                # Add the swept faces
+                offset = len(neg_verts)-n_new_neg_points
+                neg_verts = np.concatenate((neg_verts, n_verts[n_new_neg_points:]), axis=0)
+                neg_faces = np.concatenate((neg_faces, neg_face_sweep+offset), axis=0)
+                # Add cap faces at the end of the sweep to close the volume
+                cap_face = get_cap_face(n_boundary, flip_normals = True)
+                neg_faces = np.concatenate((neg_faces, cap_face+len(neg_verts)-n_new_neg_points), axis=0)
+
+        else:
+            face_sweep, n_new_points = get_swept_edges(boundary, roll_dirs[i], convex_interp, flip_normals = not sides[i])
+            assert n_new_points == stride, "The number of new points must be equal to the stride"
+            if sides[i]:
+                # Add the past verticies if either this is the first sweep, the previous sweep was negative, or the previous sweep intersected
+                if len(pos_verts) == 0 or not sides[i-1] or intersected[i-1]:
+                    offset = len(pos_verts)
+                    pos_verts = np.concatenate((pos_verts, vertices_3D[stride*(i):stride*(i+1)]),axis=0)
+                    # Add cap faces at the beginning of the sweep to close the volume on one end
+                    cap_face = get_cap_face(boundary, flip_normals = True)
+                    pos_faces = np.concatenate((pos_faces, cap_face+offset), axis=0)
+                offset = len(pos_verts)-stride
+                pos_verts = np.concatenate((pos_verts, vertices_3D[stride*(i+1):stride*(i+2)]),axis=0)
+                pos_faces = np.concatenate((pos_faces, face_sweep+offset), axis=0)
+                last_pos_sweep = i+1
+                last_pos_sweep_cap_offset = len(pos_verts) - stride
+            else:
+                # Add the past verticies if either this is the first sweep, the previous sweep was positive, or the previous sweep intersected
+                if len(neg_verts) == 0 or sides[i-1] or intersected[i-1]:
+                    offset = len(neg_verts)
+                    neg_verts = np.concatenate((neg_verts, vertices_3D[stride*(i):stride*(i+1)]),axis=0)
+                    # Add cap faces at the beginning of the sweep to close the volume on one end
+                    cap_face = get_cap_face(boundary, flip_normals = False)# true
+                    neg_faces = np.concatenate((neg_faces, cap_face+offset), axis=0)
+                offset = len(neg_verts)-stride
+                neg_verts = np.concatenate((neg_verts, vertices_3D[stride*(i+1):stride*(i+2)]),axis=0)
+                neg_faces = np.concatenate((neg_faces, face_sweep+offset), axis=0)
+                last_neg_sweep = i+1
+                last_neg_sweep_cap_offset = len(neg_verts) - stride
+
+    # Cap Faces of both volumes
+    # Only cap the end of the positive sweep if the last sweep was positive
+    # otherwise, the cap face will be added when the negative sweep is added
+    if len(pos_verts) != 0 and last_pos_sweep != 0 and last_pos_sweep == n_sweeps:
+        # Handle differently if dealing with intersections
+        cap_face = get_cap_face(boundary, flip_normals = False)
+        pos_faces = np.concatenate((pos_faces, cap_face+last_pos_sweep_cap_offset), axis=0)
+    elif len(neg_verts) != 0 and last_neg_sweep != 0 and last_neg_sweep == n_sweeps:
+        cap_face = get_cap_face(boundary, flip_normals = True)
+        neg_faces = np.concatenate((neg_faces, cap_face+last_neg_sweep_cap_offset), axis=0)
 
 
     # # Cap the ends of the swept volumes
@@ -775,23 +781,29 @@ if __name__ == "__main__":
     blade_mesh, T_WB, faces_front = simble_blade_geometry(blade_width=3.0, blade_height=0.6, blade_angle_deg=-10, blade_origin=blade_origin)
 
     T_BW = hom_inv(T_WB)
+
     # Define the path of the blade
     # T_dB = trimesh.transformations.translation_matrix([1.5, -1.5, 0.0])
     # T_dB = trimesh.transformations.rotation_matrix(np.radians(-20), [1, 0, 0])@T_dB
     # T_dB = trimesh.transformations.rotation_matrix(np.radians(-10), [0, 1, 0])@T_dB
     # T_dB2 = trimesh.transformations.translation_matrix([1.5, 0.0, 0.0])@T_dB
-    # T_dB3 = trimesh.transformations.translation_matrix([1.0, 0.0, 0.0])
-    # T_db3 = trimesh.transformations.rotation_matrix(np.radians(10), [1, 0, 0])@T_dB3
-    # T_dB3 = trimesh.transformations.rotation_matrix(np.radians(15), [0, 0, 1])@T_dB3@T_dB2
+    # T_dB3 = trimesh.transformations.translation_matrix([-0.5, 0.0, 0.0])@T_dB2
+    # # T_db3 = trimesh.transformations.rotation_matrix(np.radians(10), [1, 0, 0])@T_dB3
+    # # T_dB3 = trimesh.transformations.rotation_matrix(np.radians(15), [0, 0, 1])@T_dB3@T_dB2
     # roll_dirs = np.array([-20, 0, 10]) >= 0
     # transforms = np.array([T_dB, T_dB2, T_dB3])
+    # # Test with edge case of same transform provided twice
+    # # roll_dirs = np.array([-20, 0, 0, 0, 0, 0, 10]) >= 0
+    # # transforms = np.array([T_dB, T_dB, T_dB, T_dB, T_dB2, T_dB2, T_dB3])
     # # roll_dirs = np.array([-20]) >= 0
     # # transforms = np.array([T_dB])
 
 
-    # T_dB = trimesh.transformations.rotation_matrix(np.radians(-20), [0, 0, 1])@T_BW
-    # roll_dirs = np.array([-20]) >= 0
-    # transforms = np.array([T_BW, T_dB])
+    T_dB = trimesh.transformations.rotation_matrix(np.radians(-20), [0, 0, 1])
+    roll_dirs = np.array([-20]) >= 0
+    transforms = np.array([T_dB])
+    # roll_dirs = np.array([0,0,-20]) >= 0
+    # transforms = np.array([T_BW, T_WB@T_BW, T_dB])
 
     # Applying T_BW to transforms so that i can apply the transforms to the blade surface
     # directly. This is because the blade surface is defined in the blade frame
@@ -811,20 +823,34 @@ if __name__ == "__main__":
     # # transforms = np.array([hom_inv(T_dB)])
 
     # Testing intersection
-    T_dB = trimesh.transformations.translation_matrix([0.3, 0.4, 0.2])
+    # T_dB = trimesh.transformations.translation_matrix([0.3, 0.4, 0.2])
+    # T_dB = trimesh.transformations.rotation_matrix(np.radians(22), [1, 0, 0])@T_dB
+    # T_dB = trimesh.transformations.rotation_matrix(np.radians(-20), [0, 1, 0])@T_dB
+    # T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 0, 1])@T_dB
+    # # Flipping direction to match paper test case
+    # roll_dirs = np.array([-22]) >= 0
+    # transforms = np.array([hom_inv(T_dB)])
+
+    # Testing intersection
+    T_dB = trimesh.transformations.translation_matrix([0.1, 0,0])
     T_dB = trimesh.transformations.rotation_matrix(np.radians(22), [1, 0, 0])@T_dB
     T_dB = trimesh.transformations.rotation_matrix(np.radians(-20), [0, 1, 0])@T_dB
-    T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 0, 1])@T_dB
+    T_dB = trimesh.transformations.rotation_matrix(np.radians(-20), [0, 0, 1])@T_dB # This makes it strange
     # Flipping direction to match paper test case
-    roll_dirs = np.array([-22]) >= 0
-    transforms = np.array([hom_inv(T_dB)])
+    # roll_dirs = np.array([0]) >= 0
+    roll_dirs = np.array([-20]) >= 0
+    transforms = np.array([T_dB])
 
     alpha=255
     use_wireframe = False
     plot_pos = True
     plot_neg = True
 
+    # Time this function
+    start = time.time()
     pos_new_mesh, neg_new_mesh = sweep_thin_poly_mesh(blade_mesh.apply_transform(T_BW), transforms, roll_dirs=roll_dirs, convex_interp=True, cap=True, connect=False, alpha=alpha)
+    end = time.time()
+    print("Time taken to sweep the blade: ", end-start)
     meshes = []
     if pos_new_mesh is not None and plot_pos:
         pos_new_mesh.apply_transform(T_WB)
