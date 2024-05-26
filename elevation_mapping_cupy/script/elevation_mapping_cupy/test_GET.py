@@ -409,19 +409,16 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         print ("Mesh1 and Mesh2 pierce each other")
         # Form intersections and and intersected_edges
         # Choose to treat as mesh1 piercing mesh2
-        # Use the intersection point on mesh2 and project onto mesh1
+        # Arbitrary choice to use edges of mesh1 intersecting wiht mesh2. Will change the surface 
+
+        # Calculate the line of intersection between the two meshes
+        # If the two meshes are piercing each other, then only one edge is intersected on each
+        # We therefore need to find where the line intersects another edge of each mesh in order to split the meshes
+        # between positive and negative surfaces
+        m1_intersections, m1_valid = trimesh.intersections.plane_lines(poly_mesh2.vertices[0], poly_mesh2.face_normals[0], verts1[boundary.T], line_segments=True)
+        intersections = m1_intersections
+        intersected_edges = boundary[m1_valid]
         T21 = hom_inv(T12)
-        intersections2_proj = (T21[:3, :3]@intersections2.T + T21[:3, 3:]).T
-        intersections = np.concatenate((intersections1, intersections2_proj), axis=0)
-        # Check that intersected_lines is not the same as this may cause issues and should never really occur in practice
-        if np.all(intersected_lines1 == intersected_lines2):
-            raise ValueError("The intersected lines are the same. This should not occur in practice")
-        intersected_lines = np.concatenate((intersected_lines1, intersected_lines2), axis=0)
-        intersected_edges = boundary[intersected_lines]
-        # Find sorted order for the intersected edges
-        edge_order = np.argsort(intersected_lines)
-        intersected_edges = intersected_edges[edge_order]
-        intersections = intersections[edge_order]
         pos_verts, pos_boundary, neg_verts, neg_boundary = split_intersected_meshes(face, intersections, intersected_edges,
                                                                                     piercing_verts=verts1, pierced_verts=verts2,
                                                                                     pierced_mesh=poly_mesh2, T_piercing_pierced = T12)
@@ -435,19 +432,19 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         p1_second_vert = trimesh.points.PointCloud(pos_verts[1:2], colors=[255, 0, 0, 255])
         p1_third_vert = trimesh.points.PointCloud(pos_verts[2:3], colors=[0, 255, 0, 255])
         p1_verts = trimesh.points.PointCloud(pos_verts[3:pstride])
-        scene = trimesh.Scene([p1, p1_first_vert, p1_second_vert, p1_third_vert, p1_verts])
-        scene.show()
-        p2 = Trimesh(vertices=pos_verts[pstride:], faces=pfaces, process=process, face_colors=[255, 0, 0, 255])
-        scene.add_geometry(p2)
-        scene.show()
-        nstride = len(neg_verts)//2
-        nfaces = simple_polygon_triangulation(nstride)
-        n1 = Trimesh(vertices=neg_verts[0:nstride], faces=nfaces, process=process, face_colors=[0, 255, 0, 100])
-        scene.add_geometry(n1)
-        scene.show()
-        n2 = Trimesh(vertices=neg_verts[nstride:], faces=nfaces, process=process, face_colors=[255, 0, 0, 100])
-        scene.add_geometry(n2)
-        scene.show()
+        # scene = trimesh.Scene([p1, p1_first_vert, p1_second_vert, p1_third_vert, p1_verts])
+        # scene.show()
+        # p2 = Trimesh(vertices=pos_verts[pstride:], faces=pfaces, process=process, face_colors=[255, 0, 0, 255])
+        # scene.add_geometry(p2)
+        # scene.show()
+        # nstride = len(neg_verts)//2
+        # nfaces = simple_polygon_triangulation(nstride)
+        # n1 = Trimesh(vertices=neg_verts[0:nstride], faces=nfaces, process=process, face_colors=[0, 255, 0, 100])
+        # scene.add_geometry(n1)
+        # scene.show()
+        # n2 = Trimesh(vertices=neg_verts[nstride:], faces=nfaces, process=process, face_colors=[255, 0, 0, 100])
+        # scene.add_geometry(n2)
+        # scene.show()
         # scene = trimesh.Scene([p1, p2, n1, n2])
         # scene.show()
         
@@ -518,6 +515,7 @@ def sweep_thin_poly_mesh(
     cap: bool = True,
     check_intersects: bool = True,
     separate_surfs: bool = True,
+    alpha: int = 255,
     kwargs: Optional[Dict] = None,
     **triangulation,
 ) -> Trimesh:
@@ -592,14 +590,14 @@ def sweep_thin_poly_mesh(
     vertices_3D = np.concatenate((verts, vertices_3D), axis=0)
 
     # Plot the first and second surfaces for debugging
-    mesh_1_test = Trimesh(vertices=verts, faces=org_faces, process=False, face_colors=[0, 255, 0, 255])
-    mesh_2_test = Trimesh(vertices=vertices_3D[stride:2*stride], faces=org_faces, process=False, face_colors=[255, 0, 0, 255])
-    scene = trimesh.Scene([mesh_1_test, mesh_2_test])
-    # add vertex for the 0th vertex of the first surface
-    scene.add_geometry(trimesh.points.PointCloud(verts[0][None,:], colors=[0, 255, 0, 255]))
-    # add vertex for the 1st vertex of the first surface
-    scene.add_geometry(trimesh.points.PointCloud(verts[1][None,:], colors=[0, 0, 255, 255]))
-    scene.show()
+    # mesh_1_test = Trimesh(vertices=verts, faces=org_faces, process=False, face_colors=[0, 255, 0, 255])
+    # mesh_2_test = Trimesh(vertices=vertices_3D[stride:2*stride], faces=org_faces, process=False, face_colors=[255, 0, 0, 255])
+    # scene = trimesh.Scene([mesh_1_test, mesh_2_test])
+    # # add vertex for the 0th vertex of the first surface
+    # scene.add_geometry(trimesh.points.PointCloud(verts[0][None,:], colors=[0, 255, 0, 255]))
+    # # add vertex for the 1st vertex of the first surface
+    # scene.add_geometry(trimesh.points.PointCloud(verts[1][None,:], colors=[0, 0, 255, 255]))
+    # scene.show()
 
     sides, intersected = side_of_surface(vertices_3D, stride)
 
@@ -744,7 +742,7 @@ def sweep_thin_poly_mesh(
         kwargs["process"] = False
 
     # generate the mesh from the face data
-    alpha = 126
+    alpha = alpha
     if len(pos_verts) != 0:
         pos_face_color = [0, 255, 0, alpha]
         pos_swept_mesh = Trimesh(vertices=pos_verts, faces=pos_faces, face_colors=pos_face_color, **kwargs)
@@ -821,12 +819,17 @@ if __name__ == "__main__":
     roll_dirs = np.array([-22]) >= 0
     transforms = np.array([hom_inv(T_dB)])
 
-    pos_new_mesh, neg_new_mesh = sweep_thin_poly_mesh(blade_mesh.apply_transform(T_BW), transforms, roll_dirs=roll_dirs, convex_interp=True, cap=True, connect=False)
+    alpha=255
+    use_wireframe = False
+    plot_pos = True
+    plot_neg = True
+
+    pos_new_mesh, neg_new_mesh = sweep_thin_poly_mesh(blade_mesh.apply_transform(T_BW), transforms, roll_dirs=roll_dirs, convex_interp=True, cap=True, connect=False, alpha=alpha)
     meshes = []
-    if pos_new_mesh is not None:
+    if pos_new_mesh is not None and plot_pos:
         pos_new_mesh.apply_transform(T_WB)
         meshes.append(pos_new_mesh)
-    if neg_new_mesh is not None:
+    if neg_new_mesh is not None and plot_neg:
         neg_new_mesh.apply_transform(T_WB)
         meshes.append(neg_new_mesh)
     # trimesh.util.concatenate(new_mesh.split(only_watertight=True))
@@ -849,5 +852,4 @@ if __name__ == "__main__":
     # pc = trimesh.PointCloud(bbox_world.vertices)
     # # Visualize the bounding box
     # scene.add_geometry(pc)
-    use_wireframe = False
     scene.show(smooth=False, flags={'wireframe': use_wireframe})
