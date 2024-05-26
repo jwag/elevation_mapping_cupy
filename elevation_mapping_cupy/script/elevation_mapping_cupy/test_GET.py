@@ -229,6 +229,9 @@ def split_intersected_meshes(face, intersections, intersected_edges, piercing_ve
                     if np.all(face_circ[i:i+2] == edge):
                         # This face contains the intersected edge
                         intersected_face_inds[e] = i
+                        break
+        # # sort the indices
+        # intersected_face_inds = np.sort(intersected_face_inds)
         return intersected_face_inds
     
     # First split piercing_mesh into two parts
@@ -374,27 +377,89 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
     lines1 = np.concatenate((verts1[boundary[:,None, 0]], verts1[boundary[:,None, 1]]), axis=1)
 
     # Find the intersection between the edges of boundary1 with mesh2
-    intersections, intersected_lines = line_mesh_intersection(lines1, poly_mesh2)
-    if len(intersections) > 0:
+    intersections1, intersected_lines1 = line_mesh_intersection(lines1, poly_mesh2)
+    # For convex shapes, there should be at most 2 intersections, but there could be 0 or 1
+    # If there are 2 intersections, then mesh1 pierces mesh2
+    if len(intersections1) == 2:
         mesh1_pierces_mesh2 = True
-        # Now get the points 
-    # If there are no intersections, then check for the intersection between the edges of boundary2 with mesh1
+        intersections = intersections1
+        intersected_lines = intersected_lines1
     else:
+        # If there are no intersections, then check for the intersection between the edges of boundary2 with mesh1
         # Define lines for each edge of boundary
         lines2 = np.concatenate((verts2[boundary[:,None, 0]], verts2[boundary[:, None, 1]]), axis=1)
-        intersections, intersected_lines = line_mesh_intersection(lines2, poly_mesh1)
-        if len(intersections) > 0:
+        intersections2, intersected_lines2 = line_mesh_intersection(lines2, poly_mesh1)
+        if len(intersections2) == 2:
             mesh2_pierces_mesh1 = True
+            intersections = intersections2
+            intersected_lines = intersected_lines2
+        # If there is only 1 intersection, then the two meshes are piercing each other
+        elif len(intersections1) == 1 and len(intersections2) == 1:
+            mesh1_pierces_mesh2 = True
+            mesh2_pierces_mesh1 = True
+        elif len(intersections1) == 0 and len(intersections2) == 0:
+            pass
+        else:
+            raise ValueError("The intersections are not valid. intersections1: {}, intersections2: {}".format(len(intersections1), len(intersections2)))
 
     valid_intersect = (mesh1_pierces_mesh2 or mesh2_pierces_mesh1)
     if valid_intersect and not separate_surfs:
         return (), valid_intersect
+    elif mesh1_pierces_mesh2 and mesh2_pierces_mesh1:
+        print ("Mesh1 and Mesh2 pierce each other")
+        # Form intersections and and intersected_edges
+        # Choose to treat as mesh1 piercing mesh2
+        # Use the intersection point on mesh2 and project onto mesh1
+        T21 = hom_inv(T12)
+        intersections2_proj = (T21[:3, :3]@intersections2.T + T21[:3, 3:]).T
+        intersections = np.concatenate((intersections1, intersections2_proj), axis=0)
+        # Check that intersected_lines is not the same as this may cause issues and should never really occur in practice
+        if np.all(intersected_lines1 == intersected_lines2):
+            raise ValueError("The intersected lines are the same. This should not occur in practice")
+        intersected_lines = np.concatenate((intersected_lines1, intersected_lines2), axis=0)
+        intersected_edges = boundary[intersected_lines]
+        # Find sorted order for the intersected edges
+        edge_order = np.argsort(intersected_lines)
+        intersected_edges = intersected_edges[edge_order]
+        intersections = intersections[edge_order]
+        pos_verts, pos_boundary, neg_verts, neg_boundary = split_intersected_meshes(face, intersections, intersected_edges,
+                                                                                    piercing_verts=verts1, pierced_verts=verts2,
+                                                                                    pierced_mesh=poly_mesh2, T_piercing_pierced = T12)
+        # Plot positive and negative surfaces
+        pstride = len(pos_verts)//2
+        pfaces = simple_polygon_triangulation(pstride)
+        p1 = Trimesh(vertices=pos_verts[0:pstride], faces=pfaces, process=process, face_colors=[0, 255, 0, 255])
+        # Add vertices to the plot
+        # add first vertex to the plot as blue
+        p1_first_vert = trimesh.points.PointCloud(pos_verts[0:1], colors=[0, 0, 255, 255])
+        p1_second_vert = trimesh.points.PointCloud(pos_verts[1:2], colors=[255, 0, 0, 255])
+        p1_third_vert = trimesh.points.PointCloud(pos_verts[2:3], colors=[0, 255, 0, 255])
+        p1_verts = trimesh.points.PointCloud(pos_verts[3:pstride])
+        scene = trimesh.Scene([p1, p1_first_vert, p1_second_vert, p1_third_vert, p1_verts])
+        scene.show()
+        p2 = Trimesh(vertices=pos_verts[pstride:], faces=pfaces, process=process, face_colors=[255, 0, 0, 255])
+        scene.add_geometry(p2)
+        scene.show()
+        nstride = len(neg_verts)//2
+        nfaces = simple_polygon_triangulation(nstride)
+        n1 = Trimesh(vertices=neg_verts[0:nstride], faces=nfaces, process=process, face_colors=[0, 255, 0, 100])
+        scene.add_geometry(n1)
+        scene.show()
+        n2 = Trimesh(vertices=neg_verts[nstride:], faces=nfaces, process=process, face_colors=[255, 0, 0, 100])
+        scene.add_geometry(n2)
+        scene.show()
+        # scene = trimesh.Scene([p1, p2, n1, n2])
+        # scene.show()
+        
+        test=1
+
     elif mesh1_pierces_mesh2:
         print("Mesh1 pierces Mesh2")
         intersected_edges = boundary[intersected_lines]
         pos_verts, pos_boundary, neg_verts, neg_boundary = split_intersected_meshes(face, intersections, intersected_edges,
                                                                                     piercing_verts=verts1, pierced_verts=verts2,
                                                                                     pierced_mesh=poly_mesh2, T_piercing_pierced = T12)
+        test = 1
     elif mesh2_pierces_mesh1:
         # Split mesh2 into two parts
         print("Mesh2 pierces Mesh1")
@@ -525,6 +590,16 @@ def sweep_thin_poly_mesh(
     )[:, :3]
     # Add in the original vertices to the beginning of the vertices_3D array
     vertices_3D = np.concatenate((verts, vertices_3D), axis=0)
+
+    # Plot the first and second surfaces for debugging
+    mesh_1_test = Trimesh(vertices=verts, faces=org_faces, process=False, face_colors=[0, 255, 0, 255])
+    mesh_2_test = Trimesh(vertices=vertices_3D[stride:2*stride], faces=org_faces, process=False, face_colors=[255, 0, 0, 255])
+    scene = trimesh.Scene([mesh_1_test, mesh_2_test])
+    # add vertex for the 0th vertex of the first surface
+    scene.add_geometry(trimesh.points.PointCloud(verts[0][None,:], colors=[0, 255, 0, 255]))
+    # add vertex for the 1st vertex of the first surface
+    scene.add_geometry(trimesh.points.PointCloud(verts[1][None,:], colors=[0, 0, 255, 255]))
+    scene.show()
 
     sides, intersected = side_of_surface(vertices_3D, stride)
 
@@ -723,16 +798,26 @@ if __name__ == "__main__":
     # Applying T_BW to transforms so that i can apply the transforms to the blade surface
     # directly. This is because the blade surface is defined in the blade frame
     # The blade_mesh is defined in the world frame so the transform T_BW must 
-    T_dB = trimesh.transformations.translation_matrix([0.3, 0.4, 0.2])
-    T_dB = trimesh.transformations.rotation_matrix(np.radians(22), [1, 0, 0])@T_dB
-    T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 1, 0])@T_dB
-    T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 0, 1])@T_dB
-    # T_dB2 = trimesh.transformations.translation_matrix([-1.5, 0.0, 0.0])@T_dB
-    # roll_dirs = np.array([22,0]) >= 0
-    # transforms = np.array([T_dB, T_dB2])
+    # Testing piercing
+    # T_dB = trimesh.transformations.translation_matrix([0.3, 0.4, 0.2])
+    # T_dB = trimesh.transformations.rotation_matrix(np.radians(22), [1, 0, 0])@T_dB
+    # T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 1, 0])@T_dB
+    # T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 0, 1])@T_dB
+    # # T_dB2 = trimesh.transformations.translation_matrix([-1.5, 0.0, 0.0])@T_dB
+    # # roll_dirs = np.array([22,0]) >= 0
+    # # transforms = np.array([T_dB, T_dB2])
     # roll_dirs = np.array([22]) >= 0
     # transforms = np.array([T_dB])
-    # Flipping direction to test mesh 1 piercing mesh 2
+    # # Flipping direction to test mesh 1 piercing mesh 2
+    # # roll_dirs = np.array([-22]) >= 0
+    # # transforms = np.array([hom_inv(T_dB)])
+
+    # Testing intersection
+    T_dB = trimesh.transformations.translation_matrix([0.3, 0.4, 0.2])
+    T_dB = trimesh.transformations.rotation_matrix(np.radians(22), [1, 0, 0])@T_dB
+    T_dB = trimesh.transformations.rotation_matrix(np.radians(-20), [0, 1, 0])@T_dB
+    T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 0, 1])@T_dB
+    # Flipping direction to match paper test case
     roll_dirs = np.array([-22]) >= 0
     transforms = np.array([hom_inv(T_dB)])
 
