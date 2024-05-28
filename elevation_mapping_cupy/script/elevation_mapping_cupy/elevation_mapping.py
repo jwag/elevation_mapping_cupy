@@ -166,7 +166,7 @@ class ElevationMap:
             position (numpy.ndarray):
 
         """
-        position[0][:] = xp.asnumpy(self.center)
+        position = xp.asnumpy(self.center)
 
     def move(self, delta_position):
         """Shift the map along all three axes according to the input.
