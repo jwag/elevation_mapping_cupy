@@ -8,6 +8,11 @@ from trimesh.constants import tol
 import time
 import warnings
 
+import matplotlib.pyplot as plt
+
+from shapely.geometry import Polygon, MultiPolygon
+from shapely.ops import unary_union
+
 # Define GET Geometry and Sequence of thin 4 point polygons
 # using the trimesh library
 # Could do this with a CAD file, but this is a simple test
@@ -774,6 +779,37 @@ def sweep_thin_poly_mesh(
 
     return pos_swept_mesh, neg_swept_mesh
 
+def projected_mesh_boundary(mesh: Trimesh, axis: int = 2) -> Dict:
+    """
+    Get the boundary of a 2D mesh projected onto a plane
+
+    Parameters
+    ----------
+    mesh : trimesh.Trimesh
+      2D mesh to get the boundary of
+    axis : int
+      The axis to project the mesh onto
+
+    Returns
+    -------
+    boundary_poly : shapely.geometry.Polygon
+      A polygon representing the boundary of the mesh
+      projected onto the plane
+    """
+    # First project the vertices of the mesh onto the plane
+    proj_axes = np.array([0, 1, 2], dtype=int)
+    proj_axes = np.delete(proj_axes, axis)
+    verts2D = mesh.vertices[:, proj_axes]
+    # Define a shapely polygon for each face
+    faces = mesh.faces
+
+    multi_poly = MultiPolygon([Polygon(verts2D[face]) for face in faces])
+    # Get the boundary of the projected mesh
+    boundary_poly = unary_union(multi_poly)
+    # Get the boundary of the polygon
+    return boundary_poly
+
+
 if __name__ == "__main__":
     # Create the blade geometry
     blade_origin=[1.634, 0.0, 0.060+0.265]
@@ -799,11 +835,11 @@ if __name__ == "__main__":
     # # transforms = np.array([T_dB])
 
 
-    T_dB = trimesh.transformations.rotation_matrix(np.radians(-20), [0, 0, 1])
-    roll_dirs = np.array([-20]) >= 0
-    transforms = np.array([T_dB])
-    # roll_dirs = np.array([0,0,-20]) >= 0
-    # transforms = np.array([T_BW, T_WB@T_BW, T_dB])
+    # T_dB = trimesh.transformations.rotation_matrix(np.radians(-20), [0, 0, 1])
+    # roll_dirs = np.array([-20]) >= 0
+    # transforms = np.array([T_dB])
+    # # roll_dirs = np.array([0,0,-20]) >= 0
+    # # transforms = np.array([T_BW, T_WB@T_BW, T_dB])
 
     # Applying T_BW to transforms so that i can apply the transforms to the blade surface
     # directly. This is because the blade surface is defined in the blade frame
@@ -813,11 +849,11 @@ if __name__ == "__main__":
     # T_dB = trimesh.transformations.rotation_matrix(np.radians(22), [1, 0, 0])@T_dB
     # T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 1, 0])@T_dB
     # T_dB = trimesh.transformations.rotation_matrix(np.radians(-15), [0, 0, 1])@T_dB
-    # # T_dB2 = trimesh.transformations.translation_matrix([-1.5, 0.0, 0.0])@T_dB
-    # # roll_dirs = np.array([22,0]) >= 0
-    # # transforms = np.array([T_dB, T_dB2])
-    # roll_dirs = np.array([22]) >= 0
-    # transforms = np.array([T_dB])
+    # T_dB2 = trimesh.transformations.translation_matrix([1.5, 0.0, 0.0])@T_dB
+    # roll_dirs = np.array([22,0]) >= 0
+    # transforms = np.array([T_dB, T_dB2])
+    # # roll_dirs = np.array([22]) >= 0
+    # # transforms = np.array([T_dB])
     # # Flipping direction to test mesh 1 piercing mesh 2
     # # roll_dirs = np.array([-22]) >= 0
     # # transforms = np.array([hom_inv(T_dB)])
@@ -850,6 +886,18 @@ if __name__ == "__main__":
     start = time.time()
     pos_new_mesh, neg_new_mesh = sweep_thin_poly_mesh(blade_mesh.apply_transform(T_BW), transforms, roll_dirs=roll_dirs, convex_interp=True, cap=True, connect=False, alpha=alpha)
     end = time.time()
+
+    # TODO: After performing raycasts from grid cells then only project the 
+    pos_boundary_poly = projected_mesh_boundary(pos_new_mesh, axis=2)
+    neg_boundary_poly = projected_mesh_boundary(neg_new_mesh, axis=2)
+    # Plot the boundary of the swept volumes
+    fig, ax = plt.subplots()
+    x,y = pos_boundary_poly.exterior.xy
+    ax.plot(x, y, color='g')
+    x,y = neg_boundary_poly.exterior.xy
+    ax.plot(x, y, color='r')
+    plt.show()
+
     print("Time taken to sweep the blade: ", end-start)
     meshes = []
     if pos_new_mesh is not None and plot_pos:
