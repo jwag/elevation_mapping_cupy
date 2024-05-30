@@ -35,6 +35,7 @@ from elevation_mapping_cupy.kernels import polygon_mask_kernel
 from elevation_mapping_cupy.kernels import image_to_map_correspondence_kernel
 
 from elevation_mapping_cupy.sensor_processor import SensorProcessor, make_3x1vec
+from elevation_mapping_cupy.GET_movement import GETMovement
 from elevation_mapping_cupy.map_initializer import MapInitializer
 from elevation_mapping_cupy.plugins.plugin_manager import PluginManager
 from elevation_mapping_cupy.semantic_map import SemanticMap
@@ -139,6 +140,7 @@ class ElevationMap:
             param (elevation_mapping_cupy.parameter.Parameter):
         """
         self.sensor_processors = {}
+        self.GETs = {}
         for sensor_ID, config in param.subscriber_cfg.items():
             if config["data_type"] == "pointcloud":
                 nm_name = config["noise_model_name"]
@@ -146,7 +148,11 @@ class ElevationMap:
                 nm_params = config.get(nm_param_name, {})
                 sp = SensorProcessor(sensor_ID, nm_name, nm_params, xp)
                 self.sensor_processors[sensor_ID] = sp
-        
+            elif config["data_type"] == "GET":
+                GET_model_name = config["GET_model_name"]
+                GET_param_name = GET_model_name + "_GET_params"
+                GET_params = config.get(GET_param_name, {})
+                self.GETs[sensor_ID] = GETMovement(sensor_ID, GET_model_name, GET_params, xp=xp)
 
     def clear(self):
         """Reset all the layers of the elevation & the semantic map."""
@@ -345,7 +351,7 @@ class ElevationMap:
 
         Args:
             sensor_ID (str):                            Sensor ID
-            points_all (cupy._core.core.ndarray):
+            points_all (cupy._core.core.ndarray):       Points in the sensor frame (i.e. S_r_SP)
             channels (List[str]):                       List of channels in the point cloud besides x, y, z
             C_MB (cupy._core.core.ndarray):             Rotation matrix from the map frame to the base frame
             B_r_MB (cupy._core.core.ndarray):           Translation vector from the map frame to the base frame
@@ -474,6 +480,37 @@ class ElevationMap:
         mask = self.elevation_map[2] > 0.5
         self.elevation_map[5] = cp.where(mask, self.elevation_map[0], self.elevation_map[5])
         self.elevation_map[6] = cp.where(mask, 0.0, self.elevation_map[6])
+    
+    def input_GET_movement(self, 
+                           GET_ID: str,
+                           T_MG0: cp._core.core.ndarray,
+                           T_MG1: cp._core.core.ndarray,
+                           roll: float
+    ):
+        """Input the GET movement and update the elevation map.
+
+        Args:
+            GET_ID (str):                               GET ID
+            T_MG0 (cupy._core.core.ndarray):            Transformation matrix from the GET frame to the map frame at time t0
+            T_MG1 (cupy._core.core.ndarray):            Transformation matrix from the GET frame to the map frame at time t1
+        Returns:
+            None:
+        """
+        T_MG0 = np.asarray(T_MG0, dtype=self.data_type)
+        T_MG1 = np.asarray(T_MG1, dtype=self.data_type)
+        
+        with self.map_lock:
+            position = np.array([0, 0, 0], dtype=self.data_type)
+            self.get_position(position)
+            self.GETs[GET_ID].update_map_with_GET_movement(
+                self.elevation_map,
+                position,
+                self.cell_n,
+                self.resolution,
+                T_MG0,
+                T_MG1,
+                roll,
+            )
 
     def input_pointcloud(
         self,

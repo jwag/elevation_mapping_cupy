@@ -13,57 +13,6 @@ import matplotlib.pyplot as plt
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.ops import unary_union
 
-# Define GET Geometry and Sequence of thin 4 point polygons
-# using the trimesh library
-# Could do this with a CAD file, but this is a simple test
-def simble_blade_geometry(blade_width=3.0, blade_height=0.6, blade_angle_deg=-10, blade_origin=[1.634, 0.0, 0.060+0.265]):
-    # Blade consists of a single plane with 4 points
-    # Define the 4 points of the blade
-    # The blade is a thin 4 point polygon
-    # The blade is defined in the ZY plane
-    # where the top of the blade is in the positive Z direction,
-    # the left side of the blade is in the positive Y direction,
-    # and front of the blade facing the positive X direction when the blade is at 0 degrees.
-    # The origin of the blade is at the center of the rectangle.
-    # The blade is rotated about the Y axis at the origin by blade_angle degrees ccw about the Y axis.
-
-    # Define the 4 vertices of the blade
-    vertices = np.array([[0, blade_width/2.0, blade_height/2.0],
-                        [0, -blade_width/2.0, blade_height/2.0],
-                        [0, -blade_width/2.0, -blade_height/2.0],
-                        [0, blade_width/2.0, -blade_height/2.0]])
-    
-    curved_blade_vertices = np.array([[0.4, blade_width/2.0+0.4, blade_height/2.0],
-                                      [0.4, blade_width/2.0+0.4, -blade_height/2.0],
-                                      [0.4, -blade_width/2.0-0.4, -blade_height/2.0],
-                                      [0.4, -blade_width/2.0-0.4, blade_height/2.0]])
-    
-    # vertices = np.concatenate((vertices, curved_blade_vertices), axis=0)
-    
-    print("Original Vertices: ", vertices)
-
-    # Define the single face of the blade
-    # The blade will be visible from the front since the normal is pointing in the positive X direction
-    # of the untransformed blade
-    faces_front = np.array([[0, 1, 2, 3]])
-
-    faces_curved = np.array([[0, 3, 5, 4], [1, 7, 6, 2]])
-
-    # faces_front = np.concatenate((faces_front, faces_curved), axis=0) 
-
-    # Create the trimesh object
-    blade = trimesh.Trimesh(vertices=vertices, faces=faces_front)
-
-    # Rotate the blade about the Y axis at the origin by blade_angle degrees ccw
-    rot = trimesh.transformations.rotation_matrix(np.radians(blade_angle_deg), [0, 1, 0])
-    # Translate the blade so that the origin is at [0, 0, blade_origin_z]
-    # The transform from world frame to blade frame
-    T_WB = trimesh.transformations.translation_matrix(blade_origin)@rot
-    blade.apply_transform(T_WB)
-
-    print("Transformed Vertices: ", blade.vertices)
-
-    return blade, T_WB, faces_front
 
 def get_poly_mesh_boundary(poly_mesh):
     # Extract the boundary (edges, and vertices) of a thin convex polygon mesh
@@ -810,13 +759,276 @@ def projected_mesh_boundary(mesh: Trimesh, axis: int = 2) -> Dict:
     return boundary_poly
 
 
-if __name__ == "__main__":
-    # Create the blade geometry
-    blade_origin=[1.634, 0.0, 0.060+0.265]
-    # blade_origin=[0.0, 0.0, 0.0]
-    blade_mesh, T_WB, faces_front = simble_blade_geometry(blade_width=3.0, blade_height=0.6, blade_angle_deg=-10, blade_origin=blade_origin)
+# TODO: This function is taken from SensorProcessor. It should be moved to a utility file
+# TODO: May need to make this its own kernel...
+def get_ext_euler_angles(C, xp=np):
+    """
+    Extract Extrinsically defined Euler angles from rotation matrix
+    The transformation matrix C in terms of
+    extrinsically defined Euler angles (roll, pitch, yaw)
+    is defined as C = Rz(yaw) @ Ry(pitch) @ Rx(roll)
+    i.e. first roll about x, then pitch about y, and then yaw about z (in that order)
+    i.e. the rotation matrix is defined as a sequence of
+    rotations about the axes of the original coordinate
+    system where the axes are fixed in space.
+    For reference Basic rotation matrices are defined as:
+    Rx = lambda a: xp.array([[1, 0, 0],
+                            [0, xp.cos(a), xp.sin(a)],
+                            [0, -xp.sin(a), xp.cos(a)]])
 
-    T_BW = hom_inv(T_WB)
+    Ry = lambda b: xp.array([[xp.cos(b), 0, -xp.sin(b)],
+                            [0, 1, 0],
+                            [xp.sin(b), 0, xp.cos(b)]])
+
+    Rz = lambda c: xp.array([[xp.cos(c), xp.sin(c), 0],
+                            [-xp.sin(c), xp.cos(c), 0],
+                            [0, 0, 1]])
+    Note that this may be refered to as Extrinsic Tait-Bryan angles in x-y-z order.
+    Using Reference: Computing Euler Angles from a Rotation Matrix by Gregory G. Slabaugh
+    https://eecs.qmul.ac.uk/~gslabaugh/publications/euler.pdf
+
+    2 solutions for these Extrinsic Tait-Bryan angles always exist. 
+    The Eigen geometry module function eulerAngles(ax1,ax2,ax3) returns the intrinsically
+    defined Euler angles (a,b,c) applied in the order ax1, ax2, ax3. and ensures that the angles
+    (a,b,c) are in the ranges [0:pi]x[-pi:pi]x[-pi:pi].
+    (https://eigen.tuxfamily.org/dox/group__Geometry__Module.html#title20)
+    In order to obtain Extrinsic Tait-Bryan angles applied in the order x-y-z, robot_localization
+    uses the Eigen function y,p,r = eulerAngles(2,1,0)
+    (https://github.com/cra-ros-pkg/robot_localization/blob/49aab740c0b66c9f266141522e86d64dc86c8939/src/ros_robot_localization_listener.cpp#L456)
+    which means that the orientation state being tracked by robot_localization
+    (r,p,y) are in [-pi:pi]x[-pi:pi]x[0:pi].
+    Given this assumption we can select the correct set of angles
+    """
+    if xp.abs(C[2, 0]) != 1.0:
+        pitch1 = -xp.arcsin(C[2,0]) # Different compared to paper due to 
+        roll1 = xp.arctan2(C[2,1]/xp.cos(pitch1), C[2,2]/xp.cos(pitch1))
+        yaw1 = xp.arctan2(C[1,0]/xp.cos(pitch1), C[0,0]/xp.cos(pitch1))
+        # Select the correct set of angles
+        a1_valid = roll1 >= -xp.pi and roll1 <= xp.pi
+        a1_valid = a1_valid and (pitch1 >= -xp.pi and pitch1 <= xp.pi)
+        a1_valid = a1_valid and (yaw1 >= 0 and yaw1 <= xp.pi)
+        if a1_valid:
+            roll, pitch, yaw = roll1, pitch1, yaw1
+            return roll, pitch, yaw
+        # else:
+        pitch2 = xp.pi - pitch1
+        roll2 = xp.arctan2(C[2,1]/xp.cos(pitch2), C[2,2]/xp.cos(pitch2))
+        yaw2 = xp.arctan2(C[1,0]/xp.cos(pitch2), C[0,0]/xp.cos(pitch2))
+        a2_valid = roll2 >= -xp.pi and roll2 <= xp.pi
+        a2_valid = a2_valid and (pitch2 >= -xp.pi and pitch2 <= xp.pi)
+        a2_valid = a2_valid and (yaw2 >= 0 and yaw2 <= xp.pi)
+        if a2_valid:
+            roll, pitch, yaw = roll2, pitch2, yaw2
+            return roll, pitch, yaw
+        else:
+            raise ValueError("No valid set of Euler angles found")
+            
+    else: # Gimbal lock: pitch is at -90 or 90 degrees
+        yaw = 0.0 # This can be any value, but we choose 0.0 for consistency
+        if C[2, 0] == -1.0:
+            pitch = xp.pi/2
+            roll = yaw + xp.arctan2(C[0,1], C[0,2])
+        else:
+            pitch = -xp.pi/2
+            roll = -yaw + xp.arctan2(-C[0,1], -C[0,2])
+    return roll, pitch, yaw
+
+
+class GETMovement:
+    """
+    This class defines the ground engaging tool (GET) and provides
+    methods for generating the swept volume of the GET as it moves
+    through soil or other materials. This class also provides methods
+    for updating the elevation map as the GET moves through the material.
+
+    NOTE: The marjority of the computation done here is done on the CPU as
+    it relies on the trimesh library. Initial testing has shown that this
+    is adequate for the current application. If performance becomes an issue,
+    then the code can be modified to use the cupy library for GPU acceleration.
+    This would require either a custom implementation of portions of the trimesh
+    library or a fully custom implementation of the swept volume generation.
+    """
+
+    def __init__(self, GET_ID, GET_model_name, GET_params, xp=np, data_type=np.float32):
+        """Initialize GET for a specific sensor.
+
+        Args:
+            GET_ID (str):           GET ID. Should be unique for each instance of a GETMovement
+            GET_model_name (str):   Type of GET. Only "simple_blade" is supported for now.
+            GET_params (dict):      Parameters for the chosen GET type specified in GET_name.
+            xp (module):            Numpy or CuPy module. Default is numpy. Will not be used for trimesh operations.
+            data_type (dtype):      Data type for the GET geometry. Default is np.float32.
+        """
+        self.xp = xp
+        self.data_type = data_type
+        self.GET_ID = GET_ID
+
+        # TODO: Add support for more complex GETs
+        self.GET_models = {"simple_blade": self.simple_blade_geometry,}
+        assert GET_model_name in self.GET_models.keys(), "GET_name should be chosen from {}".format(self.GET_models.keys())
+        self.GET_model_name = GET_model_name
+        self.GET_model = self.GET_models[self.GET_model_name]
+        self.GET_params = {}
+        # Make sure params are compatible with class
+        for key in GET_params.keys():
+            self.GET_params[key] =np.array(GET_params[key], dtype=self.data_type)
+        
+        # Now generate the GET geometry
+        # TODO: Add support for multiple planar GET surfaces at different angles
+        self.GET_mesh = self.GET_model(**self.GET_params)
+
+    def simple_blade_geometry(self, blade_width=3.0, blade_height=0.6):
+        """
+        Define GET Geometry and Sequence of thin 4 point convex polygons
+        using the trimesh library
+        Could do this with a CAD file, but this is a simple test
+        Blade consists of a single plane with 4 points
+        Define the 4 points of the blade
+        The blade is a thin 4 point polygon
+        The blade is defined in the ZY plane
+        where the top of the blade is in the positive Z direction,
+        the left side of the blade is in the positive Y direction,
+        and front of the blade facing the positive X direction when the blade is at 0 degrees.
+        The origin of the blade is at the center of the rectangle in the YZ plane at [0,0,0].
+        This origin is important to ensure proper sweeping of the blade.
+        """
+
+        # Define the 4 vertices of the blade
+        vertices = np.array([[0, blade_width/2.0, blade_height/2.0],
+                            [0, -blade_width/2.0, blade_height/2.0],
+                            [0, -blade_width/2.0, -blade_height/2.0],
+                            [0, blade_width/2.0, -blade_height/2.0]])
+        
+        # curved_blade_vertices = np.array([[0.4, blade_width/2.0+0.4, blade_height/2.0],
+        #                                 [0.4, blade_width/2.0+0.4, -blade_height/2.0],
+        #                                 [0.4, -blade_width/2.0-0.4, -blade_height/2.0],
+        #                                 [0.4, -blade_width/2.0-0.4, blade_height/2.0]])
+        
+        # vertices = np.concatenate((vertices, curved_blade_vertices), axis=0)
+        
+
+        # Define the single face of the blade
+        # The blade will be visible from the front since the normal is pointing in the positive X direction
+        # of the untransformed blade
+        faces_front = np.array([[0, 1, 2, 3]])
+
+        # # faces_curved = np.array([[0, 3, 5, 4], [1, 7, 6, 2]])
+        # # faces_front = np.concatenate((faces_front, faces_curved), axis=0) 
+
+        # Create the trimesh object
+        blade = trimesh.Trimesh(vertices=vertices, faces=faces_front)
+
+        # # Rotate the blade about the Y axis at the origin by blade_angle degrees ccw
+        # # The blade is rotated about the Y axis at the origin by blade_angle degrees ccw about the Y axis.
+        # # blade_angle_deg=-10, blade_origin=[1.634, 0.0, 0.060+0.265]
+        # rot = trimesh.transformations.rotation_matrix(np.radians(blade_angle_deg), [0, 1, 0])
+        # # Translate the blade so that the origin matches the blade_origin
+        # # The transform from chassis frame to blade frame
+        # T_CB = trimesh.transformations.translation_matrix(blade_origin)@rot
+        
+        # if apply_transform:
+        #     blade.apply_transform(T_CB)
+
+        return blade
+    
+    def bounding_box_to_map_index(self, points, center, cell_n, resolution):
+        """
+        Convert bounding box points to map indices.
+        This produces indicies for cells that encompass the bounding box.
+        See custom_kernels.py map_utils kernel: get_x_idx() for more information.
+
+        Args:
+            points (np.ndarray) (n,3):  The bounding box points in the map frame
+            center (np.ndarray) (n,3):  The center of the map in the map frame
+            cell_n (int):               The number of cells in the map
+            resolution (float):         The resolution of the map
+        Returns:
+            indices (np.ndarray):   The indices of the bounding box points in the map
+            points_z_map (np.ndarray): The z values of the bounding box points in the map frame
+        """
+        points_centered = points - center.reshape(1, 3)
+        indices = (points_centered[0:2]) / resolution + cell_n / 2).astype(self.xp.int32)
+        indices = self.xp.clip(indices, 0, cell_n - 1)
+        return indices, points_centered[:,2]
+
+    def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, roll=None):
+        """
+        Update the elevation map with the movement of the GET from T_MG0 to T_MG1
+        Args:
+            elevation_map (xp.ndarray):     The full starting elevation map to update in place
+            map_center (np.ndarray):        The center of the map in the map frame
+            cell_n (int):                   The number of cells in the map
+            resolution (float):             The resolution of the map
+            T_MG0 (np.ndarray):             The initial pose of the GET in the map frame
+            T_MG1 (np.ndarray):             The final pose of the GET in the map frame
+        """
+        # First define swept volume of the GET
+        # The swept volume is the volume of the material that the GET has moved through
+        # as it moves from T_MG0 to T_MG1
+        # Sweep the volume in the frame defined by T_MG0, i.e. relative to the initial position of the GET
+        transforms = (hom_inv(T_MG0)@T_MG1)[None, :, :]
+        if roll is None:
+            # Get relative roll between the two poses, this is used to generate a convex sweep
+            roll, _, _ = get_ext_euler_angles(transforms[0,:3,:3], xp=np)
+        roll_dirs = np.array([roll]) >= 0
+        pos_swept_mesh, neg_swept_mesh = sweep_thin_poly_mesh(self.GET_mesh, transforms, roll_dirs=roll_dirs, convex_interp=True)
+        if pos_swept_mesh is not None:
+            # TODO: make into a function and call twice here
+            pos_swept_mesh.apply_transform(T_MG0)
+            # Obtain a map frame aligned bounding box for the swept volume
+            pos_bbox = pos_swept_mesh.bounding_box
+            # Find cells in the elevation map that are within the bounding box of the swept volume
+            pos_indices, points_z_map = self.bounding_box_to_map_index(pos_bbox.vertices, map_center, cell_n, resolution)
+            # Extract submap from the elevation map
+            pos_submap = elevation_map[:,pos_indices[:,0], pos_indices[:,1]]
+            # Convert elevation layer to a numpy array to enable ray casting with trimesh
+            # TODO: RESUME Here. possibly copy full map to cpu and then copy back to gpu
+            pos_em = self.xp.asnumpy(pos_submap[0])
+            # TODO: Deal with fact that these cells may not be valid. If we have no elevation data for those cells then we can't cut them
+            # We could however update the upper bound and is upper bound status of the cells...
+            # Check to see if we are likely to have an intersection by looking at the min of the submap and the minz of the swept volume
+            # Ray cast the submap with the swept volume
+
+
+            # TODO: pull relavent cells from elevation_map, check validity, update upper bound, changed occupied status,
+            # remove intersecting heights, move material to new location, update occupied status of cells where material was moved
+            # pos_boundary_poly = projected_mesh_boundary(pos_new_mesh, axis=2)
+            # x,y = pos_boundary_poly.exterior.xy
+        if neg_swept_mesh is not None:
+            neg_swept_mesh.apply_transform(T_MG0)
+            # Obtain a map frame aligned bounding box for the swept volume
+            neg_bbox = neg_new_mesh.bounding_box
+            # neg_boundary_poly = projected_mesh_boundary(neg_new_mesh, axis=2)
+            # x,y = neg_boundary_poly.exterior.xy
+        
+        pass
+
+
+if __name__ == "__main__":
+    GET_ID = "simple_flat_blade"
+    GET_name = "simple_blade"
+    GET_params = {
+        "blade_width": 3.0,
+        "blade_height": 0.6,
+    }
+    GET_m = GETMovement(GET_ID, GET_name, GET_params)
+
+    
+    # Specify starting pose of blade
+    # blade_angle_deg = -10
+    # blade_pos = [1.634, 0.0, 0.060+0.265]
+    blade_roll_deg = 0
+    blade_pitch_deg = -10
+    blade_yaw_deg = 0
+    blade_pos = [3.0, 5.0, 0.060+0.265]
+    # Rotate the blade about the Y axis at the origin by blade_angle degrees ccw
+    rot = trimesh.transformations.rotation_matrix(np.radians(blade_roll_deg), [1, 0, 0])
+    rot = trimesh.transformations.rotation_matrix(np.radians(blade_pitch_deg), [0, 1, 0])@rot
+    rot = trimesh.transformations.rotation_matrix(np.radians(blade_yaw_deg), [0, 0, 1])@rot
+    # Translate the blade so that the origin matches the blade_origin
+    # The transform from chassis frame to blade frame
+    T_WG = trimesh.transformations.translation_matrix(blade_pos)@rot
+    T_GW = hom_inv(T_WG)
 
     # Define the path of the blade
     # T_dB = trimesh.transformations.translation_matrix([1.5, -1.5, 0.0])
@@ -882,30 +1094,36 @@ if __name__ == "__main__":
     plot_pos = True
     plot_neg = True
 
+    # Get transforms in the world frame
+    # The above are just a way of generating transforms easily because we can think about them wrt the starting GET frame
+    transforms = T_WG@ transforms
+
     # Time this function
     start = time.time()
-    pos_new_mesh, neg_new_mesh = sweep_thin_poly_mesh(blade_mesh.apply_transform(T_BW), transforms, roll_dirs=roll_dirs, convex_interp=True, cap=True, connect=False, alpha=alpha)
+    # Must represent transforms as relative to the starting pose of the GET
+    # Must apply T_BW to the transforms so that the sweep is applied properly
+    # Could get rid of this requirement by transforming mesh to T_GW frame first
+    pos_new_mesh, neg_new_mesh = sweep_thin_poly_mesh(GET_m.GET_mesh, T_GW@transforms, roll_dirs=roll_dirs, convex_interp=True, cap=True, connect=False, alpha=alpha)
     end = time.time()
 
-    # TODO: After performing raycasts from grid cells then only project the 
-    pos_boundary_poly = projected_mesh_boundary(pos_new_mesh, axis=2)
-    neg_boundary_poly = projected_mesh_boundary(neg_new_mesh, axis=2)
     # Plot the boundary of the swept volumes
     fig, ax = plt.subplots()
-    x,y = pos_boundary_poly.exterior.xy
-    ax.plot(x, y, color='g')
-    x,y = neg_boundary_poly.exterior.xy
-    ax.plot(x, y, color='r')
-    plt.show()
-
     print("Time taken to sweep the blade: ", end-start)
     meshes = []
     if pos_new_mesh is not None and plot_pos:
-        pos_new_mesh.apply_transform(T_WB)
+        pos_new_mesh.apply_transform(T_WG)
         meshes.append(pos_new_mesh)
+        pos_boundary_poly = projected_mesh_boundary(pos_new_mesh, axis=2)
+        x,y = pos_boundary_poly.exterior.xy
+    ax.plot(x, y, color='g')
     if neg_new_mesh is not None and plot_neg:
-        neg_new_mesh.apply_transform(T_WB)
+        neg_new_mesh.apply_transform(T_WG)
         meshes.append(neg_new_mesh)
+        neg_boundary_poly = projected_mesh_boundary(neg_new_mesh, axis=2)
+        x,y = neg_boundary_poly.exterior.xy
+        ax.plot(x, y, color='r')
+    plt.show()
+
     # trimesh.util.concatenate(new_mesh.split(only_watertight=True))
     # new_mesh.show(smooth=False)
     # scene = trimesh.Scene([new_mesh.convex_hull])
@@ -915,10 +1133,10 @@ if __name__ == "__main__":
     scene.add_geometry(world_frame)
     # Add blade coordinate frame to the scene
     # Make origin size larger and color purple
-    blade_frame = trimesh.creation.axis(origin_size=0.1, transform=T_WB, axis_length=1.0, origin_color=[160, 32, 240])
+    blade_frame = trimesh.creation.axis(origin_size=0.1, transform=T_WG, axis_length=1.0, origin_color=[160, 32, 240])
     scene.add_geometry(blade_frame)
     # Add the Final Blade Coordinate Frame
-    final_frame = trimesh.creation.axis(origin_size=0.1, transform=T_WB@transforms[-1], axis_length=1.0)
+    final_frame = trimesh.creation.axis(origin_size=0.1, transform=transforms[-1], axis_length=1.0)
     scene.add_geometry(final_frame)
     # Now get a bounding box for the swept volume that is aligned with the world frame
     # bbox_world = new_mesh.bounding_box

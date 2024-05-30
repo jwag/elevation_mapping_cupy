@@ -1,5 +1,5 @@
 #### Basic parameters ########
-resolution: 0.1                                # resolution in m.
+resolution: 0.2                                # resolution in m.
 map_length: 30.0                                 # map's size in m.
 mahalanobis_thresh: 2.0                         # points outside this distance is outlier.
 outlier_variance: 0.01                          # if point is outlier, add this value to the cell.
