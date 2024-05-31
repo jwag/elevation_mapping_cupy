@@ -931,25 +931,66 @@ class GETMovement:
 
         return blade
     
+    def map_index_to_point_xy(self, indices, center, cell_n, resolution):
+        """
+        Convert map indices to points in the map frame.
+
+        Args:
+            indices (np.ndarray) (n,2):         The indices of the points in the map
+            center (np.ndarray) (3,):           The center of the map in the map frame
+            cell_n (int):                       The number of cells in the map
+            resolution (float):                 The resolution of the map
+        Returns:
+            points_xy (np.ndarray) (n,2):          The 2D points in the map frame
+        """
+        # Convert indices to points
+        points_xy = (indices - cell_n / 2) * resolution + center[:2].reshape(1, 2)
+        return points_xy
+    
+    def get_map_index(self, points, center, cell_n, resolution):
+        """
+        Convert points to map indices.
+        See custom_kernels.py map_utils kernel: get_x_idx() for more information.
+        Args:
+            points (np.ndarray) (n,3):          The points in the map frame
+            center (np.ndarray) (3,):           The center of the map in the map frame
+            cell_n (int):                       The number of cells in the map
+            resolution (float):                 The resolution of the map
+        Returns:
+            indices (np.ndarray) (n,2):         The indices of the points in the map
+            points_centered (np.ndarray) (n,3): The points represented in the map frame
+        """
+        points_centered = points - center.reshape(1, 3)
+        # Get the indices of the points in the map
+        indices = (points_centered[:,0:2] / resolution + cell_n / 2).astype(self.xp.int32)
+        indices = self.xp.clip(indices, 0, cell_n - 1)
+        return indices, points_centered
+    
     def bounding_box_to_map_index(self, points, center, cell_n, resolution):
         """
-        Convert bounding box points to map indices.
+        Convert map aligned bounding box points to map indices.
         This produces indicies for cells that encompass the bounding box.
-        See custom_kernels.py map_utils kernel: get_x_idx() for more information.
 
         Args:
             points (np.ndarray) (n,3):  The bounding box points in the map frame
-            center (np.ndarray) (n,3):  The center of the map in the map frame
+            center (np.ndarray) (3,):   The center of the map in the map frame
             cell_n (int):               The number of cells in the map
             resolution (float):         The resolution of the map
         Returns:
-            indices (np.ndarray):   The indices of the bounding box points in the map
-            points_z_map (np.ndarray): The z values of the bounding box points in the map frame
+            indices (np.ndarray) (2,2): The indices of the bounding box corners corresponding to 
+                                        the minimum uvz coordinates in the map and the maximum uvz coordinates
         """
-        points_centered = points - center.reshape(1, 3)
-        indices = (points_centered[0:2]) / resolution + cell_n / 2).astype(self.xp.int32)
-        indices = self.xp.clip(indices, 0, cell_n - 1)
-        return indices, points_centered[:,2]
+        # Since bounding box is axis aligned we only need the bottom corners which are where the z values are minimum
+        n = points.shape[0]
+        # Make sure n is 8
+        assert n == 8, "Bounding box should have 8 points"
+        # Since this is an axis aligned bounding box we can get the min and max coordinates
+        # by finding the min and max of each coordinate
+        points_minmax = np.array([np.min(points, axis=0), np.max(points, axis=0)])
+        # Alternatively: Sort points to find min point along x, y, and z and max point along x, y, and z
+        # sort_inds = np.lexsort((points[:,1], points[:,0], points[:,2]))
+        indices, points_centered = self.get_map_index(points_minmax, center, cell_n, resolution)
+        return indices, points_centered
 
     def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, roll=None):
         """
@@ -978,16 +1019,62 @@ class GETMovement:
             # Obtain a map frame aligned bounding box for the swept volume
             pos_bbox = pos_swept_mesh.bounding_box
             # Find cells in the elevation map that are within the bounding box of the swept volume
-            pos_indices, points_z_map = self.bounding_box_to_map_index(pos_bbox.vertices, map_center, cell_n, resolution)
-            # Extract submap from the elevation map
-            pos_submap = elevation_map[:,pos_indices[:,0], pos_indices[:,1]]
-            # Convert elevation layer to a numpy array to enable ray casting with trimesh
-            # TODO: RESUME Here. possibly copy full map to cpu and then copy back to gpu
-            pos_em = self.xp.asnumpy(pos_submap[0])
-            # TODO: Deal with fact that these cells may not be valid. If we have no elevation data for those cells then we can't cut them
-            # We could however update the upper bound and is upper bound status of the cells...
-            # Check to see if we are likely to have an intersection by looking at the min of the submap and the minz of the swept volume
-            # Ray cast the submap with the swept volume
+            pos_indices, points_centered = self.bounding_box_to_map_index(pos_bbox.vertices, map_center, cell_n, resolution)
+            min_sv_z = points_centered[0, 2]
+            max_sv_z = points_centered[1, 2]
+            # Extract submap from the elevation map and convert to a numpy array to enable ray casting with trimesh
+            pos_inds_i, pos_inds_j = np.meshgrid(np.arange(pos_indices[0,0], pos_indices[1,0]+1), np.arange(pos_indices[0,1], pos_indices[1,1]+1), indexing='ij')
+            pos_submap = elevation_map[:,pos_inds_i, pos_inds_j]
+            # Deal with fact that these cells may not be valid. If we have no elevation data for those cells then we can't cut them
+            update_elevation = True
+            update_upper_bound = False # This should be a parameter probably
+            valid_cells = pos_submap[2] > 0.5
+            if not self.xp.any(valid_cells):
+                print("No valid cells in the positive swept volume")
+                # TODO: We could however update the upper bound and is upper bound status of the cells...
+                update_elevation = False
+            else:
+                # Check to see if we are likely to have an intersection by comparing the max_z of the submap and the min_z of the swept volume bounding box
+                min_em_z = self.xp.min(pos_submap[0, valid_cells])
+                max_em_z = self.xp.max(pos_submap[0, valid_cells])
+                if min_sv_z > max_em_z:
+                    print("No intersection with positive swept volume")
+                    # TODO: We could also update the variance of the cells that are not intersected,
+                    #       e.g. if the variance is high then we can reduce it if our swept volume is close to the ground
+                    update_elevation = False
+            # Debugging Override
+            # update_elevation = True
+            if update_elevation:
+                # Convert the submap to a numpy array
+                pos_submap = self.xp.asnumpy(pos_submap)
+                valid_cells = self.xp.asnumpy(valid_cells)
+                # Ray cast from each submap cell center to the swept volume
+                # Use the
+                # Small epsilon to avoid self intersection
+                epsilon_z = 1e-1
+                start_z = np.min([min_em_z.item(), min_sv_z]) - epsilon_z
+                # Get the cell centers in the map frame
+                # Combine pos_inds_i and pos_inds_j to get the indices of the cells in the map
+                cell_inds = np.stack((pos_inds_i[valid_cells], pos_inds_j[valid_cells]), axis=1)
+                cell_centers = self.map_index_to_point_xy(cell_inds, map_center, cell_n, resolution)
+                n_cells = cell_centers.shape[0]
+                lines = np.zeros((n_cells, 2, 3), dtype=self.data_type)
+                lines[:,0,0:2] = cell_centers
+                lines[:,1,0:2] = cell_centers
+                lines[:,0,2] = start_z
+                lines[:,1,2] = pos_submap[0, valid_cells]
+                intersections, intersected_lines = line_mesh_intersection(lines, pos_swept_mesh, coincidence_tol=1e-6)
+                if len(intersections) > 0:
+                    print("Intersections found")
+                    # Update the elevation map
+                    # Get the indices of the intersected cells
+                    intersected_cells = cell_inds[intersected_lines] - pos_indices[0]
+                    # Update the elevation map with the new heights
+                    pos_submap[0, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
+                    # TODO: Update the variance of the cells
+                    # TODO: Update the upper bound status of the cells
+                    # Copy the updated submap back to the elevation map
+                    elevation_map[:,pos_inds_i, pos_inds_j] = pos_submap
 
 
             # TODO: pull relavent cells from elevation_map, check validity, update upper bound, changed occupied status,
@@ -995,13 +1082,12 @@ class GETMovement:
             # pos_boundary_poly = projected_mesh_boundary(pos_new_mesh, axis=2)
             # x,y = pos_boundary_poly.exterior.xy
         if neg_swept_mesh is not None:
-            neg_swept_mesh.apply_transform(T_MG0)
-            # Obtain a map frame aligned bounding box for the swept volume
-            neg_bbox = neg_new_mesh.bounding_box
-            # neg_boundary_poly = projected_mesh_boundary(neg_new_mesh, axis=2)
-            # x,y = neg_boundary_poly.exterior.xy
-        
-        pass
+            pass
+            # neg_swept_mesh.apply_transform(T_MG0)
+            # # Obtain a map frame aligned bounding box for the swept volume
+            # neg_bbox = neg_new_mesh.bounding_box
+            # # neg_boundary_poly = projected_mesh_boundary(neg_new_mesh, axis=2)
+            # # x,y = neg_boundary_poly.exterior.xy
 
 
 if __name__ == "__main__":

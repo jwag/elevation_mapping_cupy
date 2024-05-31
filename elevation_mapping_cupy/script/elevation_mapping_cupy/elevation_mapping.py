@@ -815,7 +815,7 @@ class ElevationMap:
             else:
                 print("Layer {} is not in the map".format(name))
                 return
-        # TODO: Determine if flipping is necessary
+        # TODO: Determine if flipping is necessary, pretty sure it isn't
         # m = xp.flip(m, 0)
         # m = xp.flip(m, 1)
         if use_stream:
@@ -835,7 +835,7 @@ class ElevationMap:
         normal_y = normal[1, 1:-1, 1:-1]
         normal_z = normal[2, 1:-1, 1:-1]
         maps = xp.stack([normal_x, normal_y, normal_z], axis=0)
-        # TODO: Determine if flipping is necessary
+        # TODO: Determine if flipping is necessary, pretty sure it isn't
         # maps = xp.flip(maps, 1)
         # maps = xp.flip(maps, 2)
         maps = xp.asnumpy(maps)

@@ -44,6 +44,8 @@ See this [docs page](https://leggedrobotics.github.io/elevation_mapping_cupy/usa
 * Map Size: Set by resolution and map_length. Map is assumed to be square which is wasteful for my needs
 * Height Drift Compensation: The parameters position_noise_thresh and orientation_noise_thresh are used to determine if the height drift compensation should be applied for a given measurement or not. If the noise from the measurement is larger than either of the thresholds then it is applied as long as enable_height_drift_compensation is true, at least min_height_drift_cnt points from the observation are used to compute the height drift error, and the computed mean_error is less than the specified max_drift parameter. The drift compensation is applied based on the formula h += mean_drift_error * drift_compensation_alpha
 * The map_util transform_p() is used to transform a point represented in the sensor frame to a point in the world/map frame. 
+* I'm not sure I understand why, but the cell_n includes a border of 1 cell around the entire boundary of the map that is never indexed from what I can tell. That means that real data starts at index 1 and ends at index cell_n-2. This is why you see the map[:,1:-1] syntax everywhere
+* Map frame is not related to the map center location. That is the position of the elevation map within the Map frame.
 
 ## TODO
 * Allow for disabling traversability filter layer. Would have to modify the height drift compensation as well as it uses travesability to mask out points used in the calculation.
@@ -57,6 +59,20 @@ See this [docs page](https://leggedrobotics.github.io/elevation_mapping_cupy/usa
 * In update_map_with_kernel() the height drift compensation is only applied to the elevation layer and not to the upper bound layer. This should likely be applied to both.
 * Clean up indexing of points, e.g. see add_points_kernel() rx, ry, rz indexing
 * In python ros node the variance due to change in time is only updated with a fixed value of time_variance whenever the timer based callback is called. The rate is set by another parameter update_variance_fps. A better way of parameterizing this would be to set the rate at which you want to have the variance evolve and then set a timer for how often this update should be performed. Then at each call the amount of temporal variance to add could be calcualted based on a timestamp differential.
+* Deal with datatype on trimesh code
+* Rethink the use of center for transforming coordinates. May not be necessary if our transforms are already wrt map frame not world frame...
+
+Next Steps:
+* Clean up functions and add note about how intersections could be a problem for us if blade is rotated in place
+* Propose method to deal with this by splitting model into separate surfaces that we extrude seprately.
+* Does it matter if we solve this? If in generated mesh is still generating surfaces that are correct, but normals that are wrong do we care? Maybe still just be able to ray trace to it. Then maybe we can use the normal of that plane where it intersects to tell us which direction to move the soil?
+* I think it does matter because you still have surfaces that are thin that are the result of improper
+* If dealing with polygons could use plane mesh intersection and try to build a mesh mesh intersection out of it...
+* Or post process existing mesh using something like [this](https://github.com/mikedh/trimesh/issues/895)
+* Test out extruding a more complex blade
+
+* Figure out this whole transform issue where initial mesh is translated and rotated...
+* The side of the starting surface that a cell falling within the intersected volume is determines the side of the ending surface that the material should be moved to. if on the positive side of start surface and intersected then will end up on the positive side of the second surface (assuming normals are not flipped to show outward normal for display of mesh)
 
 
 ## Questions
