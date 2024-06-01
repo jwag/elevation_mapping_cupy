@@ -65,6 +65,8 @@ def line_mesh_intersection(line, mesh, coincidence_tol=1e-6):
     if len(locations) == 0:
         intersections = []
         intersected_lines = []
+        invalid_intersections = []
+        invalid_lines = []
     else:
         # Now need to determine if the intersection is on the line segment
         # First compute the distance from the origin of the ray to the intersection point
@@ -81,18 +83,27 @@ def line_mesh_intersection(line, mesh, coincidence_tol=1e-6):
         # then we treat as a non-intersection. This is to handle numerical issues
         # where the edge is actually coincident with the mesh surface
         # Set coincidence_tol to 0 to disable to detect coincident edges
-        on_line = dist_to_end - dist_to_intersection >= coincidence_tol
+        valid_intersect = dist_to_end - dist_to_intersection >= coincidence_tol
+        invalid_intersect = np.logical_not(valid_intersect)
 
-        if np.any(on_line):
+        if np.any(valid_intersect):
             # Get the indices of the intersected lines
-            intersected_lines = index_ray[on_line]
+            intersected_lines = index_ray[valid_intersect]
             # Get the intersection point on the line segment
-            intersections = locations
+            intersections = locations[valid_intersect]
+            invalid_intersections = locations[invalid_intersect]
+            invalid_lines = index_ray[invalid_intersect]
+
         else:
             intersections = []
             intersected_lines = []
+            invalid_intersections = locations
+            invalid_lines = index_ray
       
-    return intersections, intersected_lines
+    # intersections is location of valid intersections of the the lines intersected_lines with the mesh
+    # invalid_intersections is the location of the ray intersections that were outside of the bounds of 
+    # the line(useful for upper bound calcs), and invalid_lines is the index of the rays that had invalid intersections
+    return intersections, intersected_lines, invalid_intersections, invalid_lines
 
 def side_of_plane(points, plane_normal, plane_origin=None):
     """
@@ -339,7 +350,7 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
     lines1 = np.concatenate((verts1[boundary[:,None, 0]], verts1[boundary[:,None, 1]]), axis=1)
 
     # Find the intersection between the edges of boundary1 with mesh2
-    intersections1, intersected_lines1 = line_mesh_intersection(lines1, poly_mesh2)
+    intersections1, intersected_lines1, _, _ = line_mesh_intersection(lines1, poly_mesh2)
     # For convex shapes, there should be at most 2 intersections, but there could be 0 or 1
     # If there are 2 intersections, then mesh1 pierces mesh2
     if len(intersections1) == 2:
@@ -350,7 +361,7 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         # If there are no intersections, then check for the intersection between the edges of boundary2 with mesh1
         # Define lines for each edge of boundary
         lines2 = np.concatenate((verts2[boundary[:,None, 0]], verts2[boundary[:, None, 1]]), axis=1)
-        intersections2, intersected_lines2 = line_mesh_intersection(lines2, poly_mesh1)
+        intersections2, intersected_lines2, _, _ = line_mesh_intersection(lines2, poly_mesh1)
         if len(intersections2) == 2:
             mesh2_pierces_mesh1 = True
             intersections = intersections2
@@ -992,12 +1003,13 @@ class GETMovement:
         indices, points_centered = self.get_map_index(points_minmax, center, cell_n, resolution)
         return indices, points_centered
     
-    def update_map_with_swept_volume(self, swept_mesh, T_MG0, elevation_map, map_center, cell_n, resolution):
+    def update_map_with_swept_volume(self, swept_mesh, T_MG0, var_h, elevation_map, map_center, cell_n, resolution):
         """
         Update the elevation map in place with the a swept volume derived from the GET
         Args:
             swept_mesh (trimesh.Trimesh):    The swept volume of the GET
             T_MG0 (np.ndarray):              The initial pose of the GET in the map frame
+            var_h (float):                   The variance of the height of the swept volume
             elevation_map (xp.ndarray):      The full starting elevation map to update in place
             map_center (np.ndarray):         The center of the map in the map frame
             cell_n (int):                    The number of cells in the map
@@ -1015,7 +1027,7 @@ class GETMovement:
         submap = elevation_map[:,inds_i, inds_j]
         # Deal with fact that these cells may not be valid. If we have no elevation data for those cells then we can't cut them
         update_elevation = True
-        update_upper_bound = False # This should be a parameter probably
+        # TODO: Could perform ray cast even if there is no possibility of intersection if we just want to update the upper bound
         valid_cells = submap[2] > 0.5
         if not self.xp.any(valid_cells):
             print("No valid cells in the swept volume")
@@ -1051,7 +1063,8 @@ class GETMovement:
             lines[:,1,0:2] = cell_centers
             lines[:,0,2] = start_z
             lines[:,1,2] = submap[0, valid_cells]
-            intersections, intersected_lines = line_mesh_intersection(lines, swept_mesh, coincidence_tol=1e-6)
+            intersections, intersected_lines, invalid_intersections, invalid_lines = line_mesh_intersection(lines, swept_mesh, coincidence_tol=1e-6)
+            map_update = False
             if len(intersections) > 0:
                 print("Intersections found")
                 # Update the elevation map
@@ -1059,8 +1072,28 @@ class GETMovement:
                 intersected_cells = cell_inds[intersected_lines] - bb_indices[0]
                 # Update the elevation map with the new heights
                 submap[0, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
-                # TODO: Update the variance of the cells
-                # TODO: Update the upper bound status of the cells
+                # ["elevation": 0, "variance": 1, "is_valid": 2, "traversability": 3, "time": 4, "upper_bound": 5, "is_upper_bound": 6]` 
+                # Update the variance of the cells. Using simple variance update for now
+                submap[1, intersected_cells[:,0], intersected_cells[:,1]] += var_h
+                # Update the upper bound of the overlapping cells (set to the updated elevation)
+                submap[5, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
+                # Update the is_upper_bound status of the cells
+                submap[6, intersected_cells[:,0], intersected_cells[:,1]] = 0.0
+                # Will need to update the original elevation map with the updated submap now
+                map_update = True
+            if len(invalid_intersections) > 0:
+                print("Updating Upper Bound for non-overlapping cells")
+                # Update the elevation map
+                # Get the indices of the intersected cells
+                ub_cells = cell_inds[invalid_lines] - bb_indices[0]
+                # Update the upper bound of the overlapping cells (set to the updated elevation)
+                submap[5, ub_cells[:,0], ub_cells[:,1]] = invalid_intersections[:,2]
+                # Update the is_upper_bound status of the cells
+                submap[6, ub_cells[:,0], ub_cells[:,1]] = 1.0
+                # Will need to update the original elevation map with the updated submap now
+                map_update = True
+
+            if map_update:
                 # Copy the updated submap back to the elevation map
                 elevation_map[:,inds_i, inds_j] = submap
 
@@ -1071,7 +1104,7 @@ class GETMovement:
         # x,y = boundary_poly.exterior.xy
         return
 
-    def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, roll=None):
+    def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, var_h, roll=None):
         """
         Update the elevation map with the movement of the GET from T_MG0 to T_MG1
         Args:
@@ -1081,6 +1114,8 @@ class GETMovement:
             resolution (float):             The resolution of the map
             T_MG0 (np.ndarray):             The initial pose of the GET in the map frame
             T_MG1 (np.ndarray):             The final pose of the GET in the map frame
+            var_h (float):                  The variance of the height of the swept volume
+            roll (float):                   The roll of the GET in degrees
         """
         # First define swept volume of the GET
         # The swept volume is the volume of the material that the GET has moved through
@@ -1093,9 +1128,9 @@ class GETMovement:
         roll_dirs = np.array([roll]) >= 0
         pos_swept_mesh, neg_swept_mesh = sweep_thin_poly_mesh(self.GET_mesh, transforms, roll_dirs=roll_dirs, convex_interp=True)
         if pos_swept_mesh is not None:
-            self.update_map_with_swept_volume(pos_swept_mesh, T_MG0, elevation_map, map_center, cell_n, resolution)
+            self.update_map_with_swept_volume(pos_swept_mesh, T_MG0, var_h, elevation_map, map_center, cell_n, resolution)
         if neg_swept_mesh is not None:
-            self.update_map_with_swept_volume(neg_swept_mesh, T_MG0, elevation_map, map_center, cell_n, resolution)
+            self.update_map_with_swept_volume(neg_swept_mesh, T_MG0, var_h, elevation_map, map_center, cell_n, resolution)
         return
 
 

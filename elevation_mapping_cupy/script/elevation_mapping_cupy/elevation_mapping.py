@@ -485,6 +485,7 @@ class ElevationMap:
                            GET_ID: str,
                            T_MG0: cp._core.core.ndarray,
                            T_MG1: cp._core.core.ndarray,
+                           var_h: float,
                            roll: float
     ):
         """Input the GET movement and update the elevation map.
@@ -493,6 +494,8 @@ class ElevationMap:
             GET_ID (str):                               GET ID
             T_MG0 (cupy._core.core.ndarray):            Transformation matrix from the GET frame to the map frame at time t0
             T_MG1 (cupy._core.core.ndarray):            Transformation matrix from the GET frame to the map frame at time t1
+            var_h (float):                              Variance of the height measurement
+            roll (float):                               Roll angle of the GET frame w.r.t. the map frame
         Returns:
             None:
         """
@@ -502,6 +505,7 @@ class ElevationMap:
         with self.map_lock:
             position = np.array([0, 0, 0], dtype=self.data_type)
             self.get_position(position)
+            # TODO: Make the varh derived from the pose uncertainty and use a sensor model
             self.GETs[GET_ID].update_map_with_GET_movement(
                 self.elevation_map,
                 position,
@@ -509,6 +513,7 @@ class ElevationMap:
                 self.resolution,
                 T_MG0,
                 T_MG1,
+                var_h,
                 roll,
             )
 
