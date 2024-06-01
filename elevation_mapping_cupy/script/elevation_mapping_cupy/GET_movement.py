@@ -991,6 +991,85 @@ class GETMovement:
         # sort_inds = np.lexsort((points[:,1], points[:,0], points[:,2]))
         indices, points_centered = self.get_map_index(points_minmax, center, cell_n, resolution)
         return indices, points_centered
+    
+    def update_map_with_swept_volume(self, swept_mesh, T_MG0, elevation_map, map_center, cell_n, resolution):
+        """
+        Update the elevation map in place with the a swept volume derived from the GET
+        Args:
+            swept_mesh (trimesh.Trimesh):    The swept volume of the GET
+            T_MG0 (np.ndarray):              The initial pose of the GET in the map frame
+            elevation_map (xp.ndarray):      The full starting elevation map to update in place
+            map_center (np.ndarray):         The center of the map in the map frame
+            cell_n (int):                    The number of cells in the map
+            resolution (float):              The resolution of the map
+        """
+        swept_mesh.apply_transform(T_MG0)
+        # Obtain a map frame aligned bounding box for the swept volume
+        bbox = swept_mesh.bounding_box
+        # Find cells in the elevation map that are within the bounding box of the swept volume
+        bb_indices, points_centered = self.bounding_box_to_map_index(bbox.vertices, map_center, cell_n, resolution)
+        min_sv_z = points_centered[0, 2]
+        max_sv_z = points_centered[1, 2]
+        # Extract submap from the elevation map and convert to a numpy array to enable ray casting with trimesh
+        inds_i, inds_j = np.meshgrid(np.arange(bb_indices[0,0], bb_indices[1,0]+1), np.arange(bb_indices[0,1], bb_indices[1,1]+1), indexing='ij')
+        submap = elevation_map[:,inds_i, inds_j]
+        # Deal with fact that these cells may not be valid. If we have no elevation data for those cells then we can't cut them
+        update_elevation = True
+        update_upper_bound = False # This should be a parameter probably
+        valid_cells = submap[2] > 0.5
+        if not self.xp.any(valid_cells):
+            print("No valid cells in the swept volume")
+            # TODO: We could however update the upper bound and is upper bound status of the cells...
+            update_elevation = False
+        else:
+            # Check to see if we are likely to have an intersection by comparing the max_z of the submap and the min_z of the swept volume bounding box
+            min_em_z = self.xp.min(submap[0, valid_cells])
+            max_em_z = self.xp.max(submap[0, valid_cells])
+            if min_sv_z > max_em_z:
+                print("No intersection with swept volume")
+                # TODO: We could also update the variance of the cells that are not intersected,
+                #       e.g. if the variance is high then we can reduce it if our swept volume is close to the ground
+                update_elevation = False
+        # Debugging Override
+        # update_elevation = True
+        if update_elevation:
+            # Convert the submap to a numpy array
+            submap = self.xp.asnumpy(submap)
+            valid_cells = self.xp.asnumpy(valid_cells)
+            # Ray cast from each submap cell center to the swept volume
+            # Use the
+            # Small epsilon to avoid self intersection
+            epsilon_z = 1e-1
+            start_z = np.min([min_em_z.item(), min_sv_z]) - epsilon_z
+            # Get the cell centers in the map frame
+            # Combine inds_i and inds_j to get the indices of the cells in the map
+            cell_inds = np.stack((inds_i[valid_cells], inds_j[valid_cells]), axis=1)
+            cell_centers = self.map_index_to_point_xy(cell_inds, map_center, cell_n, resolution)
+            n_cells = cell_centers.shape[0]
+            lines = np.zeros((n_cells, 2, 3), dtype=self.data_type)
+            lines[:,0,0:2] = cell_centers
+            lines[:,1,0:2] = cell_centers
+            lines[:,0,2] = start_z
+            lines[:,1,2] = submap[0, valid_cells]
+            intersections, intersected_lines = line_mesh_intersection(lines, swept_mesh, coincidence_tol=1e-6)
+            if len(intersections) > 0:
+                print("Intersections found")
+                # Update the elevation map
+                # Get the indices of the intersected cells
+                intersected_cells = cell_inds[intersected_lines] - bb_indices[0]
+                # Update the elevation map with the new heights
+                submap[0, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
+                # TODO: Update the variance of the cells
+                # TODO: Update the upper bound status of the cells
+                # Copy the updated submap back to the elevation map
+                elevation_map[:,inds_i, inds_j] = submap
+
+
+        # TODO: pull relavent cells from elevation_map, check validity, update upper bound, changed occupied status,
+        # remove intersecting heights, move material to new location, update occupied status of cells where material was moved
+        # boundary_poly = projected_mesh_boundary(new_mesh, axis=2)
+        # x,y = boundary_poly.exterior.xy
+        return
 
     def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, roll=None):
         """
@@ -1014,80 +1093,10 @@ class GETMovement:
         roll_dirs = np.array([roll]) >= 0
         pos_swept_mesh, neg_swept_mesh = sweep_thin_poly_mesh(self.GET_mesh, transforms, roll_dirs=roll_dirs, convex_interp=True)
         if pos_swept_mesh is not None:
-            # TODO: make into a function and call twice here
-            pos_swept_mesh.apply_transform(T_MG0)
-            # Obtain a map frame aligned bounding box for the swept volume
-            pos_bbox = pos_swept_mesh.bounding_box
-            # Find cells in the elevation map that are within the bounding box of the swept volume
-            pos_indices, points_centered = self.bounding_box_to_map_index(pos_bbox.vertices, map_center, cell_n, resolution)
-            min_sv_z = points_centered[0, 2]
-            max_sv_z = points_centered[1, 2]
-            # Extract submap from the elevation map and convert to a numpy array to enable ray casting with trimesh
-            pos_inds_i, pos_inds_j = np.meshgrid(np.arange(pos_indices[0,0], pos_indices[1,0]+1), np.arange(pos_indices[0,1], pos_indices[1,1]+1), indexing='ij')
-            pos_submap = elevation_map[:,pos_inds_i, pos_inds_j]
-            # Deal with fact that these cells may not be valid. If we have no elevation data for those cells then we can't cut them
-            update_elevation = True
-            update_upper_bound = False # This should be a parameter probably
-            valid_cells = pos_submap[2] > 0.5
-            if not self.xp.any(valid_cells):
-                print("No valid cells in the positive swept volume")
-                # TODO: We could however update the upper bound and is upper bound status of the cells...
-                update_elevation = False
-            else:
-                # Check to see if we are likely to have an intersection by comparing the max_z of the submap and the min_z of the swept volume bounding box
-                min_em_z = self.xp.min(pos_submap[0, valid_cells])
-                max_em_z = self.xp.max(pos_submap[0, valid_cells])
-                if min_sv_z > max_em_z:
-                    print("No intersection with positive swept volume")
-                    # TODO: We could also update the variance of the cells that are not intersected,
-                    #       e.g. if the variance is high then we can reduce it if our swept volume is close to the ground
-                    update_elevation = False
-            # Debugging Override
-            # update_elevation = True
-            if update_elevation:
-                # Convert the submap to a numpy array
-                pos_submap = self.xp.asnumpy(pos_submap)
-                valid_cells = self.xp.asnumpy(valid_cells)
-                # Ray cast from each submap cell center to the swept volume
-                # Use the
-                # Small epsilon to avoid self intersection
-                epsilon_z = 1e-1
-                start_z = np.min([min_em_z.item(), min_sv_z]) - epsilon_z
-                # Get the cell centers in the map frame
-                # Combine pos_inds_i and pos_inds_j to get the indices of the cells in the map
-                cell_inds = np.stack((pos_inds_i[valid_cells], pos_inds_j[valid_cells]), axis=1)
-                cell_centers = self.map_index_to_point_xy(cell_inds, map_center, cell_n, resolution)
-                n_cells = cell_centers.shape[0]
-                lines = np.zeros((n_cells, 2, 3), dtype=self.data_type)
-                lines[:,0,0:2] = cell_centers
-                lines[:,1,0:2] = cell_centers
-                lines[:,0,2] = start_z
-                lines[:,1,2] = pos_submap[0, valid_cells]
-                intersections, intersected_lines = line_mesh_intersection(lines, pos_swept_mesh, coincidence_tol=1e-6)
-                if len(intersections) > 0:
-                    print("Intersections found")
-                    # Update the elevation map
-                    # Get the indices of the intersected cells
-                    intersected_cells = cell_inds[intersected_lines] - pos_indices[0]
-                    # Update the elevation map with the new heights
-                    pos_submap[0, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
-                    # TODO: Update the variance of the cells
-                    # TODO: Update the upper bound status of the cells
-                    # Copy the updated submap back to the elevation map
-                    elevation_map[:,pos_inds_i, pos_inds_j] = pos_submap
-
-
-            # TODO: pull relavent cells from elevation_map, check validity, update upper bound, changed occupied status,
-            # remove intersecting heights, move material to new location, update occupied status of cells where material was moved
-            # pos_boundary_poly = projected_mesh_boundary(pos_new_mesh, axis=2)
-            # x,y = pos_boundary_poly.exterior.xy
+            self.update_map_with_swept_volume(pos_swept_mesh, T_MG0, elevation_map, map_center, cell_n, resolution)
         if neg_swept_mesh is not None:
-            pass
-            # neg_swept_mesh.apply_transform(T_MG0)
-            # # Obtain a map frame aligned bounding box for the swept volume
-            # neg_bbox = neg_new_mesh.bounding_box
-            # # neg_boundary_poly = projected_mesh_boundary(neg_new_mesh, axis=2)
-            # # x,y = neg_boundary_poly.exterior.xy
+            self.update_map_with_swept_volume(neg_swept_mesh, T_MG0, elevation_map, map_center, cell_n, resolution)
+        return
 
 
 if __name__ == "__main__":
