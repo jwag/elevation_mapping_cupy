@@ -10,7 +10,7 @@ subscribers:
   lidar_front: # Must match the observation key from the gym env
     topic_name: '/lidar/front/points'
     data_type: pointcloud
-    noise_model_name: LiDAR
+    noise_model_name: SLS_old
     SLS_old_noise_model_params:
       sensor_noise_factor: 0.05                       # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
     constant_noise_model_params:
@@ -32,7 +32,7 @@ subscribers:
   lidar_rear: # Must match the observation key from the gym env
     topic_name: '/lidar/rear/points'
     data_type: pointcloud
-    noise_model_name: LiDAR
+    noise_model_name: SLS_old
     SLS_old_noise_model_params:
       sensor_noise_factor: 0.05                       # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
     constant_noise_model_params:
