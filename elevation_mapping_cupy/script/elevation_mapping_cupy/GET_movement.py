@@ -65,6 +65,7 @@ def line_mesh_intersection(line, mesh, coincidence_tol=1e-6):
     if len(locations) == 0:
         intersections = []
         intersected_lines = []
+        pierce_dist = []
         invalid_intersections = []
         invalid_lines = []
     else:
@@ -83,7 +84,8 @@ def line_mesh_intersection(line, mesh, coincidence_tol=1e-6):
         # then we treat as a non-intersection. This is to handle numerical issues
         # where the edge is actually coincident with the mesh surface
         # Set coincidence_tol to 0 to disable to detect coincident edges
-        valid_intersect = dist_to_end - dist_to_intersection >= coincidence_tol
+        pierce_dist = dist_to_end - dist_to_intersection
+        valid_intersect = pierce_dist >= coincidence_tol
         invalid_intersect = np.logical_not(valid_intersect)
 
         if np.any(valid_intersect):
@@ -91,19 +93,20 @@ def line_mesh_intersection(line, mesh, coincidence_tol=1e-6):
             intersected_lines = index_ray[valid_intersect]
             # Get the intersection point on the line segment
             intersections = locations[valid_intersect]
+            pierce_dist = pierce_dist[valid_intersect]
             invalid_intersections = locations[invalid_intersect]
             invalid_lines = index_ray[invalid_intersect]
-
         else:
             intersections = []
             intersected_lines = []
+            pierce_dist = []
             invalid_intersections = locations
             invalid_lines = index_ray
       
     # intersections is location of valid intersections of the the lines intersected_lines with the mesh
     # invalid_intersections is the location of the ray intersections that were outside of the bounds of 
     # the line(useful for upper bound calcs), and invalid_lines is the index of the rays that had invalid intersections
-    return intersections, intersected_lines, invalid_intersections, invalid_lines
+    return intersections, intersected_lines, pierce_dist, invalid_intersections, invalid_lines
 
 def side_of_plane(points, plane_normal, plane_origin=None):
     """
@@ -350,7 +353,7 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
     lines1 = np.concatenate((verts1[boundary[:,None, 0]], verts1[boundary[:,None, 1]]), axis=1)
 
     # Find the intersection between the edges of boundary1 with mesh2
-    intersections1, intersected_lines1, _, _ = line_mesh_intersection(lines1, poly_mesh2)
+    intersections1, intersected_lines1, _, _, _ = line_mesh_intersection(lines1, poly_mesh2)
     # For convex shapes, there should be at most 2 intersections, but there could be 0 or 1
     # If there are 2 intersections, then mesh1 pierces mesh2
     if len(intersections1) == 2:
@@ -361,7 +364,7 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         # If there are no intersections, then check for the intersection between the edges of boundary2 with mesh1
         # Define lines for each edge of boundary
         lines2 = np.concatenate((verts2[boundary[:,None, 0]], verts2[boundary[:, None, 1]]), axis=1)
-        intersections2, intersected_lines2, _, _ = line_mesh_intersection(lines2, poly_mesh1)
+        intersections2, intersected_lines2, _, _, _ = line_mesh_intersection(lines2, poly_mesh1)
         if len(intersections2) == 2:
             mesh2_pierces_mesh1 = True
             intersections = intersections2
@@ -958,7 +961,7 @@ class GETMovement:
         points_xy = (indices - cell_n / 2) * resolution + center[:2].reshape(1, 2)
         return points_xy
     
-    def get_map_index(self, points, center, cell_n, resolution):
+    def get_map_index(self, points, center, cell_n, resolution, round_dir="down"):
         """
         Convert points to map indices.
         See custom_kernels.py map_utils kernel: get_x_idx() for more information.
@@ -967,14 +970,19 @@ class GETMovement:
             center (np.ndarray) (3,):           The center of the map in the map frame
             cell_n (int):                       The number of cells in the map
             resolution (float):                 The resolution of the map
+            round_dir (str):                    The direction to round the indices. Default is "down".
         Returns:
-            indices (np.ndarray) (n,2):         The indices of the points in the map
+            indices (np.ndarray) (n,2):         The indices of the points in the map (rounded down)
             points_centered (np.ndarray) (n,3): The points represented in the map frame
         """
         points_centered = points - center.reshape(1, 3)
         # Get the indices of the points in the map
-        indices = (points_centered[:,0:2] / resolution + cell_n / 2).astype(self.xp.int32)
-        indices = self.xp.clip(indices, 0, cell_n - 1)
+        inds = (points_centered[:,0:2] / resolution + cell_n / 2)
+        if round_dir == "down":
+            indices = inds.astype(np.int32)
+        elif round_dir == "up":
+            indices = np.ceil(inds).astype(np.int32)
+        indices = np.clip(indices, 0, cell_n - 1)
         return indices, points_centered
     
     def bounding_box_to_map_index(self, points, center, cell_n, resolution):
@@ -997,25 +1005,31 @@ class GETMovement:
         assert n == 8, "Bounding box should have 8 points"
         # Since this is an axis aligned bounding box we can get the min and max coordinates
         # by finding the min and max of each coordinate
-        points_minmax = np.array([np.min(points, axis=0), np.max(points, axis=0)])
+        points_min = np.min(points, axis=0)
+        points_max = np.max(points, axis=0)
         # Alternatively: Sort points to find min point along x, y, and z and max point along x, y, and z
         # sort_inds = np.lexsort((points[:,1], points[:,0], points[:,2]))
-        indices, points_centered = self.get_map_index(points_minmax, center, cell_n, resolution)
+        # Round down for min and up for max to ensure a conservative bounding box with a minimum 1 cell border
+        indices_min, point_min_centered = self.get_map_index(points_min, center, cell_n, resolution, round_dir="down")
+        indices_max, point_max_centered = self.get_map_index(points_max, center, cell_n, resolution, round_dir="up")
+        indices = np.concatenate((indices_min, indices_max), axis=0)
+        points_centered = np.concatenate((point_min_centered, point_max_centered), axis=0)
         return indices, points_centered
     
-    def update_map_with_swept_volume(self, swept_mesh, T_MG0, var_h, elevation_map, map_center, cell_n, resolution):
+    def update_map_with_swept_volume(self, swept_mesh, normal, translation, normal_weight, var_h, elevation_map, map_center, cell_n, resolution):
         """
         Update the elevation map in place with the a swept volume derived from the GET
         Args:
-            swept_mesh (trimesh.Trimesh):    The swept volume of the GET
-            T_MG0 (np.ndarray):              The initial pose of the GET in the map frame
+            swept_mesh (trimesh.Trimesh):    The swept volume of the GET in the map frame
+            normal (np.ndarray):             The normal vector of the starting plane of the swept volume
+            translation (np.ndarray):        The translation vector of the swept volume in the map frame
+            normal_weight (float):           The weight of the normal vector used in computing the material movement direction
             var_h (float):                   The variance of the height of the swept volume
             elevation_map (xp.ndarray):      The full starting elevation map to update in place
             map_center (np.ndarray):         The center of the map in the map frame
             cell_n (int):                    The number of cells in the map
             resolution (float):              The resolution of the map
         """
-        swept_mesh.apply_transform(T_MG0)
         # Obtain a map frame aligned bounding box for the swept volume
         bbox = swept_mesh.bounding_box
         # Find cells in the elevation map that are within the bounding box of the swept volume
@@ -1063,7 +1077,7 @@ class GETMovement:
             lines[:,1,0:2] = cell_centers
             lines[:,0,2] = start_z
             lines[:,1,2] = submap[0, valid_cells]
-            intersections, intersected_lines, invalid_intersections, invalid_lines = line_mesh_intersection(lines, swept_mesh, coincidence_tol=1e-6)
+            intersections, intersected_lines, pierce_dist, invalid_intersections, invalid_lines = line_mesh_intersection(lines, swept_mesh, coincidence_tol=1e-6)
             map_update = False
             if len(intersections) > 0:
                 print("Intersections found")
@@ -1079,7 +1093,17 @@ class GETMovement:
                 submap[5, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
                 # Update the is_upper_bound status of the cells
                 submap[6, intersected_cells[:,0], intersected_cells[:,1]] = 0.0
+                move_dir = self.material_movement_direction(normal, translation, normal_weight=normal_weight)
+                # TODO: RESUME HERE!!! Move the cells that are intersected to the new location
+                # Update elevation layer, variance layer, upper bound, is_upper_bound, and elevation_loose
+                # Write function that propagates the material to the new location. May have to expand the bounding box to include all cells that are intersected
                 # Will need to update the original elevation map with the updated submap now
+                # Form rays for line mesh intersection where z is the elevation halfway height of intersection
+                # Take xy components of normal of original face and average with translation vector to get direction for ray
+                # Get intersection points with the swept volume.
+                # Then need to find cell center that is closest to the intersection point that has not been intersected
+                # Can look at intersected_cells to find where intersected cells are and then move along ray to find next cell?
+                # locations, index_ray, index_tri = mesh.ray.intersects_location(ray_origins=ray_origins, ray_directions=ray_dirs)
                 map_update = True
             if len(invalid_intersections) > 0:
                 print("Updating Upper Bound for non-overlapping cells")
@@ -1104,6 +1128,73 @@ class GETMovement:
         # x,y = boundary_poly.exterior.xy
         return
 
+    def material_movement_direction(self, normal, translation, normal_weight=0.5):
+        """
+        Determine the direction of material movement based on the normal of the swept volume face
+        and the translation of the swept volume face. This is a heuristic that is not physically based.
+        In a real GET-soil interaction, the movement of material would be based on pysical properties of
+        the soil and the blade such as cohesion and friction. This is a simple heuristic that assumes
+        that material is moved in an a direction between the starting surface normal and the translation vector.
+        The z component of the vectors is ignored and movement is only in the xy plane since we are assuming
+        a height-grid representation.
+        A normal_weight of 0.5 gives equal weight to the normal and translation vectors. When selecting a normal_weight,
+        it is useful to think of the normal vector as representing the movement of material in the scenario where no
+        cohesion exists between the material and the blade (e.g. sand). Vice versa, the translation vector represents
+        the movement of material in the scenario where material is cohesive and "sticks" to the blade (e.g. clay).
+        
+        Args:
+            normal (np.ndarray) (3,):       The normal of the swept volume face
+            translation (np.ndarray) (3,):  The translation of the swept volume face
+            normal_weight (float):          The weight to give to the normal vector. Default is 0.5
+        Returns:
+            move_dir (np.ndarray) (2,):     The direction of material movement in the xy plane
+        """
+        # Get the xy component of the normal and translation
+        normal_xy = normal[:2]
+        translation_xy = translation[:2]
+        # Normalize the vectors
+        normal_norm = np.linalg.norm(normal_xy)
+        translation_norm = np.linalg.norm(translation_xy)
+        # TODO: Clean thus up with the below assumption. If this occurs then we should abort?
+        assert normal_norm != 0, "Normal vector projection to xy plane is zero. This shoud never occur"
+        if normal_norm != 0:
+            normal_xy = normal_xy / normal_norm
+        
+        if translation_norm != 0:
+            translation_xy = translation_xy / translation_norm
+            # Need to constrain translational norm so that it has a positive component in the direction of the normal
+            # This is because the normal vector determines the side of the blade that is moving material and 
+            # we don't want material to move in the opposite direction of the normal
+            cos_vecs = np.dot(normal_xy, translation_xy)
+            if cos_vecs < 0:
+                # Project translation vector onto the vector perpendicular to the normal vector
+                translation_xy = translation_xy - cos_vecs*normal_xy
+                # TODO: RESUME HERE: Figure out how to deal with normal and translation vector averaging
+                # maybe make normal vector weight a minimum of 0.51 or something?
+                # How do we ensure that we get a positive component in the direction of the normal? for the move_dir?
+        
+        if normal_norm == 0 and translation_norm == 0:
+            # If both vectors are zero then return zero vector
+            # TODO: May want to handle this better in the future
+            raise ValueError("Both normal and translation vectors are zero")
+            # return np.array([0.0, 0.0])
+        elif translation_norm == 0 and normal_weight == 0:
+            if normal_norm != 0:
+                warnings.warn("Translation vector is zero, returning normal vector")
+                return normal_xy
+        elif normal_norm == 0 and normal_weight == 1:
+            if translation_norm != 0:
+                warnings.warn("Normal vector is zero, returning translation vector")
+                return translation_xy
+        
+        # Determine the direction of movement as a vector between the normal and translation vectors
+        move_dir = normal_xy*normal_weight + translation_xy*(1-normal_weight)
+        # Ensure move_dir has a positive component in the direction of the normal
+        np.dot(move_dir, normal_xy)
+        # Normalize the movement direction
+        move_dir = np.linalg.norm(move_dir)
+        return move_dir
+
     def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, var_h, roll=None):
         """
         Update the elevation map with the movement of the GET from T_MG0 to T_MG1
@@ -1127,10 +1218,23 @@ class GETMovement:
             roll, _, _ = get_ext_euler_angles(transforms[0,:3,:3], xp=np)
         roll_dirs = np.array([roll]) >= 0
         pos_swept_mesh, neg_swept_mesh = sweep_thin_poly_mesh(self.GET_mesh, transforms, roll_dirs=roll_dirs, convex_interp=True)
+        # Starting face normal and translation vector are used to determine the direction of material movement (a heuristic)
+        # Obtain the normal of the oritinal surface of the GET and put in map frame
+        normal = T_MG0[:3, :3]@self.GET_mesh.face_normals[0]
+        # Also get the translation between the two poses of the GET
+        translation = T_MG1[:3, 3] - T_MG0[:3, 3]
+        # TODO: Make this a model parameter
+        normal_weight = 0.5
         if pos_swept_mesh is not None:
-            self.update_map_with_swept_volume(pos_swept_mesh, T_MG0, var_h, elevation_map, map_center, cell_n, resolution)
+            # Move the swept volume to the map frame
+            pos_swept_mesh.apply_transform(T_MG0)
+            self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, normal_weight, var_h, elevation_map, map_center, cell_n, resolution)
         if neg_swept_mesh is not None:
-            self.update_map_with_swept_volume(neg_swept_mesh, T_MG0, var_h, elevation_map, map_center, cell_n, resolution)
+            # Flip the direction of the normal for the negative swept volume
+            normal = -normal
+            # Move the swept volume to the map frame
+            neg_swept_mesh.apply_transform(T_MG0)
+            self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, normal_weight, var_h, elevation_map, map_center, cell_n, resolution)
         return
 
 

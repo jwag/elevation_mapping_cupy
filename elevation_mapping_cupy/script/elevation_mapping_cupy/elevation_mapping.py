@@ -73,7 +73,6 @@ class ElevationMap:
 
         self.map_lock = threading.Lock()
         self.semantic_map = SemanticMap(self.param)
-        self.elevation_map = xp.zeros((7, self.cell_n, self.cell_n), dtype=self.data_type)
         self.layer_names = [
             "elevation",
             "variance",
@@ -82,7 +81,9 @@ class ElevationMap:
             "time",
             "upper_bound",
             "is_upper_bound",
+            "elevation_loose"
         ]
+        self.elevation_map = xp.zeros((len(self.layer_names), self.cell_n, self.cell_n), dtype=self.data_type)
 
         # buffers
         self.traversability_buffer = xp.full((self.cell_n, self.cell_n), xp.nan)
