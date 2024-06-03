@@ -1016,6 +1016,37 @@ class GETMovement:
         points_centered = np.concatenate((point_min_centered, point_max_centered), axis=0)
         return indices, points_centered
     
+    def find_deposit_locations(self, intersected_cells, move_dir, map_size):
+        dx = move_dir[0]
+        dy = move_dir[1]
+
+        deposit_location = np.zeros_like(intersected_cells)
+        occ_map = np.zeros(map_size, dtype=bool)
+        occ_map[intersected_cells[:,0], intersected_cells[:,1]] = True
+
+        if (abs(dx) >= abs(dy)):
+            step = abs(dx)
+        else:
+            step = abs(dy)
+
+        dx = dx / step
+        dy = dy / step
+        for i, intersected_cell_ind in enumerate(intersected_cells):
+            x = intersected_cell_ind[0]
+            y = intersected_cell_ind[1]
+            while True:
+                xind = int(x)
+                yind = int(y)
+                if (occ_map[xind, yind] == False):
+                    deposit_location[i] = np.array([x, y])
+                    break
+                x = x + dx
+                y = y + dy
+                if (x < 0 or x >= map_size[0] or y < 0 or y >= map_size[1]):
+                    raise ValueError("Deposit location not found")
+                    break
+        return deposit_location
+    
     def update_map_with_swept_volume(self, swept_mesh, normal, translation, normal_weight, var_h, elevation_map, map_center, cell_n, resolution):
         """
         Update the elevation map in place with the a swept volume derived from the GET
@@ -1081,30 +1112,42 @@ class GETMovement:
             map_update = False
             if len(intersections) > 0:
                 print("Intersections found")
-                # Update the elevation map
-                # Get the indices of the intersected cells
-                intersected_cells = cell_inds[intersected_lines] - bb_indices[0]
-                # Update the elevation map with the new heights
-                submap[0, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
-                # ["elevation": 0, "variance": 1, "is_valid": 2, "traversability": 3, "time": 4, "upper_bound": 5, "is_upper_bound": 6]` 
-                # Update the variance of the cells. Using simple variance update for now
-                submap[1, intersected_cells[:,0], intersected_cells[:,1]] += var_h
-                # Update the upper bound of the overlapping cells (set to the updated elevation)
-                submap[5, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
-                # Update the is_upper_bound status of the cells
-                submap[6, intersected_cells[:,0], intersected_cells[:,1]] = 0.0
-                move_dir = self.material_movement_direction(normal, translation, normal_weight=normal_weight)
-                # TODO: RESUME HERE!!! Move the cells that are intersected to the new location
-                # Update elevation layer, variance layer, upper bound, is_upper_bound, and elevation_loose
-                # Write function that propagates the material to the new location. May have to expand the bounding box to include all cells that are intersected
-                # Will need to update the original elevation map with the updated submap now
-                # Form rays for line mesh intersection where z is the elevation halfway height of intersection
-                # Take xy components of normal of original face and average with translation vector to get direction for ray
-                # Get intersection points with the swept volume.
-                # Then need to find cell center that is closest to the intersection point that has not been intersected
-                # Can look at intersected_cells to find where intersected cells are and then move along ray to find next cell?
-                # locations, index_ray, index_tri = mesh.ray.intersects_location(ray_origins=ray_origins, ray_directions=ray_dirs)
-                map_update = True
+                # Find the direction of material movement
+                move_dir, valid_movement = self.material_movement_direction(normal, translation, normal_weight=normal_weight)
+                if not valid_movement:
+                    print("Invalid movement direction, skipping update of elevation map")
+                else:
+                    # Update the elevation map
+                    # Get the indices of the intersected cells
+                    intersected_cells = cell_inds[intersected_lines] - bb_indices[0]
+                    # Update the elevation map with the new heights
+                    submap[0, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
+                    # Ensure that loose material is removed from the cells if there is any
+                    submap[7, intersected_cells[:,0], intersected_cells[:,1]] = np.maximum(submap[7, intersected_cells[:,0], intersected_cells[:,1]]- pierce_dist, 0.0)
+                    # ["elevation": 0, "variance": 1, "is_valid": 2, "traversability": 3, "time": 4, "upper_bound": 5, "is_upper_bound": 6, "elevation_loose": 7]` 
+                    # Update the variance of the cells. Using simple variance update for now
+                    submap[1, intersected_cells[:,0], intersected_cells[:,1]] += var_h
+                    # Update the upper bound of the overlapping cells (set to the updated elevation)
+                    submap[5, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
+                    # Update the is_upper_bound status of the cells
+                    submap[6, intersected_cells[:,0], intersected_cells[:,1]] = 0.0
+                    # TODO: RESUME HERE!!! Move the cells that are intersected to the new location
+                    # Update elevation layer, variance layer, upper bound, is_upper_bound, and elevation_loose
+                    # Write function that propagates the material to the new location. May have to expand the bounding box to include all cells that are intersected
+                    # Will need to update the original elevation map with the updated submap now
+                    # Form rays for line mesh intersection where z is the elevation halfway height of intersection
+                    # test_move_dir = [0.6, 0.5]
+                    # move_dir = test_move_dir
+                    deposit_inds = self.find_deposit_locations(intersected_cells, move_dir, submap.shape[1:3])
+                    # Deposit
+                    submap[0, deposit_inds[:,0], deposit_inds[:,1]] += pierce_dist
+                    # Also update the loose material elevation
+                    submap[7, deposit_inds[:,0], deposit_inds[:,1]] += pierce_dist
+                    # Get intersection points with the swept volume.
+                    # Then need to find cell center that is closest to the intersection point that has not been intersected
+                    # Can look at intersected_cells to find where intersected cells are and then move along ray to find next cell?
+                    # locations, index_ray, index_tri = mesh.ray.intersects_location(ray_origins=ray_origins, ray_directions=ray_dirs)
+                    map_update = True
             if len(invalid_intersections) > 0:
                 print("Updating Upper Bound for non-overlapping cells")
                 # Update the elevation map
@@ -1147,53 +1190,44 @@ class GETMovement:
             translation (np.ndarray) (3,):  The translation of the swept volume face
             normal_weight (float):          The weight to give to the normal vector. Default is 0.5
         Returns:
-            move_dir (np.ndarray) (2,):     The direction of material movement in the xy plane
+            move_dir (np.ndarray) (2,):     The direction of material movement in the xy plane (normalized)
+            valid (bool):                   True if the movement direction is valid, False otherwise
         """
+        # Normalize the vectors
+        normal_norm = np.linalg.norm(normal)
+        translation_norm = np.linalg.norm(translation)
+        # TODO: Clean thus up with the below assumption. If this occurs then we should abort?
+        assert normal_norm != 0, "Normal vector norm is zero. This shoud never occur"
+        normal = normal/ normal_norm
+        if translation_norm != 0:
+            translation = translation / translation_norm
+        # else: The translation vector is zero, averaging will result in normal vector
+        
         # Get the xy component of the normal and translation
         normal_xy = normal[:2]
         translation_xy = translation[:2]
-        # Normalize the vectors
-        normal_norm = np.linalg.norm(normal_xy)
-        translation_norm = np.linalg.norm(translation_xy)
-        # TODO: Clean thus up with the below assumption. If this occurs then we should abort?
-        assert normal_norm != 0, "Normal vector projection to xy plane is zero. This shoud never occur"
-        if normal_norm != 0:
-            normal_xy = normal_xy / normal_norm
+
+        if np.linalg.norm(translation_xy) == 0 and normal_weight == 0:
+            warnings.warn("Translation in xy is zero and normal weight is zero. Don't move material.")
         
-        if translation_norm != 0:
-            translation_xy = translation_xy / translation_norm
-            # Need to constrain translational norm so that it has a positive component in the direction of the normal
-            # This is because the normal vector determines the side of the blade that is moving material and 
-            # we don't want material to move in the opposite direction of the normal
-            cos_vecs = np.dot(normal_xy, translation_xy)
-            if cos_vecs < 0:
-                # Project translation vector onto the vector perpendicular to the normal vector
-                translation_xy = translation_xy - cos_vecs*normal_xy
-                # TODO: RESUME HERE: Figure out how to deal with normal and translation vector averaging
-                # maybe make normal vector weight a minimum of 0.51 or something?
-                # How do we ensure that we get a positive component in the direction of the normal? for the move_dir?
-        
-        if normal_norm == 0 and translation_norm == 0:
-            # If both vectors are zero then return zero vector
-            # TODO: May want to handle this better in the future
-            raise ValueError("Both normal and translation vectors are zero")
-            # return np.array([0.0, 0.0])
-        elif translation_norm == 0 and normal_weight == 0:
-            if normal_norm != 0:
-                warnings.warn("Translation vector is zero, returning normal vector")
-                return normal_xy
-        elif normal_norm == 0 and normal_weight == 1:
-            if translation_norm != 0:
-                warnings.warn("Normal vector is zero, returning translation vector")
-                return translation_xy
+        # If normal is in the z direction then a movement direction will be dictated by translation. Should't occur in this application
+        if np.linalg.norm(normal_xy) == 0:
+            warnings.warn("Normal is in z direction (zero in xy). May observe unexpected behavior.")
         
         # Determine the direction of movement as a vector between the normal and translation vectors
         move_dir = normal_xy*normal_weight + translation_xy*(1-normal_weight)
-        # Ensure move_dir has a positive component in the direction of the normal
-        np.dot(move_dir, normal_xy)
         # Normalize the movement direction
-        move_dir = np.linalg.norm(move_dir)
-        return move_dir
+        move_dir_norm = np.linalg.norm(move_dir)
+        if move_dir_norm != 0:
+            move_dir = move_dir / move_dir_norm
+            valid = True
+        else:
+            warnings.warn("Movement direction is zero. Don't move material")
+            # This could be because the swept volue is actually a plane and the normal and translation vectors are orthogonal
+            # Then we have pierced the soil, but not moved any material
+            valid = False
+        
+        return move_dir, valid
 
     def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, var_h, roll=None):
         """

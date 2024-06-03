@@ -662,6 +662,15 @@ class ElevationMap:
 
         """
         return self.process_map_for_publish(self.elevation_map[0], fill_nan=True, add_z=True)
+    
+    def get_elevation_loose(self):
+        """Get the elevation loose layer.
+
+        Returns:
+            elevation layer
+
+        """
+        return self.process_map_for_publish(self.elevation_map[7], fill_nan=True, add_z=False)
 
     def get_variance(self):
         """Get the variance layer.
@@ -796,6 +805,8 @@ class ElevationMap:
                 m = self.get_upper_bound()
             elif name == "is_upper_bound":
                 m = self.get_is_upper_bound()
+            elif name == "elevation_loose":
+                m = self.get_elevation_loose()
             elif name == "normal_x":
                 m = self.normal_map.copy()[0, 1:-1, 1:-1]
             elif name == "normal_y":
