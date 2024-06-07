@@ -13,6 +13,8 @@ import matplotlib.pyplot as plt
 from shapely.geometry import Polygon, MultiPolygon
 from shapely.ops import unary_union
 
+warnings.simplefilter('always', UserWarning)
+
 
 def get_poly_mesh_boundary(poly_mesh):
     # Extract the boundary (edges, and vertices) of a thin convex polygon mesh
@@ -46,8 +48,8 @@ def hom_inv(T):
 def line_mesh_intersection(line, mesh, coincidence_tol=1e-6):
     # Define rays for each edge of boundary1
     # The rays are defined by the vertices of the edges
-    ray_dirs = line[:,0] - line[:,1]
-    ray_origins = line[:,1]
+    ray_dirs = line[:,1] - line[:,0]
+    ray_origins = line[:,0]
 
     # Visualize the rays and the mesh
     # stack rays into line segments for visualization as Path3D
@@ -76,6 +78,7 @@ def line_mesh_intersection(line, mesh, coincidence_tol=1e-6):
         # then the intersection point is on the line segment
         # Otherwise, the intersection point is not on the line segment
         # Compute the distance from the origin of the ray to the intersection point
+        # TODO: Only compute norm with z value because we are ray casting in z
         dist_to_intersection = np.linalg.norm(locations - ray_origins[index_ray], axis=1)
         # Compute the distance from the origin of the ray to the end of the ray
         dist_to_end = np.linalg.norm(ray_dirs[index_ray], axis=1)
@@ -1061,6 +1064,9 @@ class GETMovement:
             cell_n (int):                    The number of cells in the map
             resolution (float):              The resolution of the map
         """
+        # TODO: Rework this to properly deal with map_center. Maybe transform the swept volume to the map_center
+        if map_center[2] != 0.0:
+            raise ValueError("The map center is currently assumed to be at z=0.0. This will result in incorrect GET interaction")
         # Obtain a map frame aligned bounding box for the swept volume
         bbox = swept_mesh.bounding_box
         # Find cells in the elevation map that are within the bounding box of the swept volume
@@ -1117,13 +1123,15 @@ class GETMovement:
                 if not valid_movement:
                     print("Invalid movement direction, skipping update of elevation map")
                 else:
-                    # Update the elevation map
+                    # Remove the material from the cells that are intersected
                     # Get the indices of the intersected cells
                     intersected_cells = cell_inds[intersected_lines] - bb_indices[0]
                     # Update the elevation map with the new heights
                     submap[0, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
                     # Ensure that loose material is removed from the cells if there is any
-                    submap[7, intersected_cells[:,0], intersected_cells[:,1]] = np.maximum(submap[7, intersected_cells[:,0], intersected_cells[:,1]]- pierce_dist, 0.0)
+                    loose_remaining = np.maximum(submap[7, intersected_cells[:,0], intersected_cells[:,1]]- pierce_dist, 0.0)
+                    loose_moved = submap[7, intersected_cells[:,0], intersected_cells[:,1]] - loose_remaining
+                    submap[7, intersected_cells[:,0], intersected_cells[:,1]] = loose_remaining
                     # ["elevation": 0, "variance": 1, "is_valid": 2, "traversability": 3, "time": 4, "upper_bound": 5, "is_upper_bound": 6, "elevation_loose": 7]` 
                     # Update the variance of the cells. Using simple variance update for now
                     submap[1, intersected_cells[:,0], intersected_cells[:,1]] += var_h
@@ -1131,22 +1139,26 @@ class GETMovement:
                     submap[5, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
                     # Update the is_upper_bound status of the cells
                     submap[6, intersected_cells[:,0], intersected_cells[:,1]] = 0.0
-                    # TODO: RESUME HERE!!! Move the cells that are intersected to the new location
-                    # Update elevation layer, variance layer, upper bound, is_upper_bound, and elevation_loose
-                    # Write function that propagates the material to the new location. May have to expand the bounding box to include all cells that are intersected
-                    # Will need to update the original elevation map with the updated submap now
-                    # Form rays for line mesh intersection where z is the elevation halfway height of intersection
-                    # test_move_dir = [0.6, 0.5]
-                    # move_dir = test_move_dir
+
+                    # Deposit the material in the a new location
+                    # Find where to deposit the material based on the movement direction
                     deposit_inds = self.find_deposit_locations(intersected_cells, move_dir, submap.shape[1:3])
-                    # Deposit
+                    valid_deposit_inds = submap[2, deposit_inds[:,0], deposit_inds[:,1]] > 0.5
+                    # Handle case where the material is deposited outside the valid portion of the map
+                    # a deposition locaiton may need to be a a cell that is within the map,
+                    if not np.all(valid_deposit_inds):
+                        warnings.warn("Some deposit locations are not valid. Material not conseved")
+                        deposit_inds = deposit_inds[valid_deposit_inds]
+                        pierce_dist = pierce_dist[valid_deposit_inds]
+                    # Deposit the material in the new location for elevation and loose material
                     submap[0, deposit_inds[:,0], deposit_inds[:,1]] += pierce_dist
-                    # Also update the loose material elevation
                     submap[7, deposit_inds[:,0], deposit_inds[:,1]] += pierce_dist
-                    # Get intersection points with the swept volume.
-                    # Then need to find cell center that is closest to the intersection point that has not been intersected
-                    # Can look at intersected_cells to find where intersected cells are and then move along ray to find next cell?
-                    # locations, index_ray, index_tri = mesh.ray.intersects_location(ray_origins=ray_origins, ray_directions=ray_dirs)
+                    # Update the variance of the cells where material was deposited
+                    submap[1, deposit_inds[:,0], deposit_inds[:,1]] += var_h
+                    # Update the upper bound
+                    submap[5, deposit_inds[:,0], deposit_inds[:,1]] = submap[0, deposit_inds[:,0], deposit_inds[:,1]]
+                    # Update the is_upper_bound status of the cells
+                    submap[6, deposit_inds[:,0], deposit_inds[:,1]] = 0.0
                     map_update = True
             if len(invalid_intersections) > 0:
                 print("Updating Upper Bound for non-overlapping cells")
@@ -1163,12 +1175,6 @@ class GETMovement:
             if map_update:
                 # Copy the updated submap back to the elevation map
                 elevation_map[:,inds_i, inds_j] = submap
-
-
-        # TODO: pull relavent cells from elevation_map, check validity, update upper bound, changed occupied status,
-        # remove intersecting heights, move material to new location, update occupied status of cells where material was moved
-        # boundary_poly = projected_mesh_boundary(new_mesh, axis=2)
-        # x,y = boundary_poly.exterior.xy
         return
 
     def material_movement_direction(self, normal, translation, normal_weight=0.5):
