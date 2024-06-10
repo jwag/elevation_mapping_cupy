@@ -173,13 +173,27 @@ def add_points_kernel(
                           // continue;
                         }
                         else {
-                            T new_h = (map_h * v + z * map_v) / (map_v + v);
-                            T new_v = (map_v * v) / (map_v + v);
+                            U valid = map[get_map_idx(idx, 2)];
+                            // If the map was not occupied before, just update the map
+                            T new_h = z;
+                            T new_v = v;
+                            if (valid >= 0.5) {
+                                // If the map was occupied before, update the map using the filter update rule
+                                new_h = (map_h * v + z * map_v) / (map_v + v);
+                                new_v = (map_v * v) / (map_v + v);
+                                // Only update the loose elevation if the map was occupied before
+                                // If new point is above the existing map, add the difference to the loose elevation
+                                // If below then remove the difference from the loose elevation
+                                // TODO think about old loose height vs new loose height...
+                                T delta_loose = new_h - map_h;
+                                // Loose elevation can only be positive
+                                delta_loose = max(-map[get_map_idx(idx, 7)], delta_loose);
+                                // TODO: Could make this update loose only if user wants to. May be useful if we have poor localization
+                                atomicAdd(&newmap[get_map_idx(idx, 7)], delta_loose);
+                            }
                             atomicAdd(&newmap[get_map_idx(idx, 0)], new_h);
                             atomicAdd(&newmap[get_map_idx(idx, 1)], new_v);
                             atomicAdd(&newmap[get_map_idx(idx, 2)], 1.0);
-                            // is Valid
-                            map[get_map_idx(idx, 2)] = 1;
                             // Time layer
                             map[get_map_idx(idx, 4)] = 0.0;
                             // Upper bound
@@ -353,7 +367,6 @@ def average_map_kernel(width, height, max_variance, initial_variance):
             """
             U h = map[get_map_idx(i, 0)];
             U v = map[get_map_idx(i, 1)];
-            U valid = map[get_map_idx(i, 2)];
             U new_h = newmap[get_map_idx(i, 0)];
             U new_v = newmap[get_map_idx(i, 1)];
             U new_cnt = newmap[get_map_idx(i, 2)];
@@ -362,17 +375,24 @@ def average_map_kernel(width, height, max_variance, initial_variance):
                     map[get_map_idx(i, 0)] = 0;
                     map[get_map_idx(i, 1)] = ${initial_variance};
                     map[get_map_idx(i, 2)] = 0;
+                    // Also reset the loose elevation
+                    map[get_map_idx(i, 7)] = 0;
                 }
                 else {
                     map[get_map_idx(i, 0)] = new_h / new_cnt;
                     map[get_map_idx(i, 1)] = new_v / new_cnt;
                     map[get_map_idx(i, 2)] = 1;
+                    // Also update the loose elevation with the average change
+                    map[get_map_idx(i, 7)] += newmap[get_map_idx(i, 7)]/new_cnt;
                 }
             }
+            U valid = map[get_map_idx(i, 2)];
             if (valid < 0.5) {
                 map[get_map_idx(i, 0)] = 0;
                 map[get_map_idx(i, 1)] = ${initial_variance};
                 map[get_map_idx(i, 2)] = 0;
+                // Also reset the loose elevation
+                map[get_map_idx(i, 7)] = 0;
             }
             """
         ).substitute(max_variance=max_variance, initial_variance=initial_variance),
