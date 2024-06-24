@@ -950,7 +950,7 @@ class GETMovement:
     
     def map_index_to_point_xy(self, indices, center, cell_n, resolution):
         """
-        Convert map indices to points in the map frame.
+        Convert map indices to points in the map frame (not map origin frame).
 
         Args:
             indices (np.ndarray) (n,2):         The indices of the points in the map
@@ -966,7 +966,13 @@ class GETMovement:
     
     def get_map_index(self, points, center, cell_n, resolution, round_dir="down"):
         """
-        Convert points to map indices.
+        Convert points in map frame to map indices.
+        Since elevation_map is itself represented in the map origin frame, O, 
+        which is translated from the map frame by center, we need to account for this
+        when converting points to indices. This is done by centering the points
+        at the map center before using the resolution to convert to indices.
+        Additionally, (0,0) in the map origin frame corresponds to the middle of
+        elevation_map with cell_n/2 cells in each direction.
         See custom_kernels.py map_utils kernel: get_x_idx() for more information.
         Args:
             points (np.ndarray) (n,3):          The points in the map frame
@@ -976,7 +982,7 @@ class GETMovement:
             round_dir (str):                    The direction to round the indices. Default is "down".
         Returns:
             indices (np.ndarray) (n,2):         The indices of the points in the map (rounded down)
-            points_centered (np.ndarray) (n,3): The points represented in the map frame
+            points_centered (np.ndarray) (n,3): The points represented in the map origin frame
         """
         points_centered = points - center.reshape(1, 3)
         # Get the indices of the points in the map
@@ -1027,6 +1033,8 @@ class GETMovement:
         occ_map = np.zeros(map_size, dtype=bool)
         occ_map[intersected_cells[:,0], intersected_cells[:,1]] = True
 
+        # This is a digitial differential analyzer (DDA) line algorithm
+        # see https://en.wikipedia.org/wiki/Digital_differential_analyzer_(graphics_algorithm)
         if (abs(dx) >= abs(dy)):
             step = abs(dx)
         else:
@@ -1050,29 +1058,129 @@ class GETMovement:
                     break
         return deposit_location
     
-    def update_map_with_swept_volume(self, swept_mesh, normal, translation, normal_weight, var_h, elevation_map, map_center, cell_n, resolution):
+    def get_xy_GET_distance(self, inds, point_z, t_dir, GET_plane_origin, normal, cell_n, resolution):
         """
-        Update the elevation map in place with the a swept volume derived from the GET
+        Get the distance from a query point along -t_dir to the GET plane in horizontal plane
+
         Args:
-            swept_mesh (trimesh.Trimesh):    The swept volume of the GET in the map frame
+            inds (np.ndarray) (2,):             The query point xy indicies of the elevation map
+            point_z (float):                    The z coordinate of the query point in the map origin frame O
+            t_dir (np.ndarray) (2,):            The direction of translation in 2d
+            GET_plane_origin (np.ndarray) (3,): The origin of the GET plane in the map frame
+            normal (np.ndarray) (3,):           The normal of the GET plane
+            map_center (np.ndarray) (3,):       The center of the map in the map frame
+            cell_n (int):                       The number of cells in the map
+            resolution (float):                 The resolution of the map
+        """
+        # Get xy coordinates (we want it in the map origin frame so make center = 0,0,0)
+        center = np.array([0.0, 0.0, 0.0], dtype=self.data_type)
+        point_xy = self.map_index_to_point_xy(inds, center, cell_n, resolution)
+        # Combine the xy coordinates with the z height of the intersected cell
+        point = np.append(point_xy, point_z)
+        # Trace back in the opposite direction of the translation in horizontal plane
+        # to find the intersection with the GET plane
+        line_dir = np.append(-t_dir, 0.0)[np.newaxis]
+        # Normalize line_dir bc plane_lines expects it
+        line_dir = line_dir / np.linalg.norm(line_dir)
+        _, v, d = trimesh.intersections.planes_lines(GET_plane_origin[np.newaxis], normal[np.newaxis], point[np.newaxis], line_dir, return_distance=True)
+        assert v == 1.0, "The line should always intersect the plane"
+        # For some reason this returns negative distances sometimes
+        d = abs(d)
+        return d
+    
+    def get_surface_points(self, intersected_cells, t_dir, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max):
+        """
+        For each intersected cell, find the set of surface points in the direction of movement
+        and return the points in the form of (d_t, z) where d_t is the distance along the movement direction
+
+        Args:
+            intersected_cells (np.ndarray) (n,2):   The indices of the intersected cells
+            t_dir (np.ndarray) (2,):                The direction of translation in 2d
+        """
+        dx = t_dir[0]
+        dy = t_dir[1]
+
+        n = intersected_cells.shape[0]
+
+        # Obtain the points to fit the plane to in coordinates of (d_t, z)
+        # where d_t is the distance along the movement direction
+        surf_points = [np.zeros((0,2)) for _ in range(n)]
+
+        # This is a digitial differential analyzer (DDA) line algorithm
+        # see https://en.wikipedia.org/wiki/Digital_differential_analyzer_(graphics_algorithm)
+        if (abs(dx) >= abs(dy)):
+            step = abs(dx)
+        else:
+            step = abs(dy)
+
+        dx = dx / step
+        dy = dy / step
+        for i, intersected_cell_ind in enumerate(intersected_cells):
+            x = intersected_cell_ind[0]
+            y = intersected_cell_ind[1]
+            while True:
+                xind = int(x)
+                yind = int(y)
+                # We want to trace the to the blade surface plane from query cell at the height of the 
+                # intersection of for the intersected cell to best obtain the distance along the movement direction
+                # TODO: Check that this is the same as the intersection height
+                point_z = elevation_map[0, intersected_cell_ind[0], intersected_cell_ind[1]].get() - pierce_dist[i]
+                inds = np.array([xind, yind])
+                d_t = self.get_xy_GET_distance(inds, point_z, t_dir, GET_plane_origin, normal, cell_n, resolution)
+                if (d_t > l_fit_max):
+                    assert surf_points[i].shape[0] > 0, "No points found for surface"
+                    break
+                if (elevation_map[2, xind, yind] > 0.5):
+                    # Only add valid points to the surface points
+                    z = elevation_map[0, xind, yind].get()
+                    surf_points[i] = np.concatenate((surf_points[i], np.array([[d_t[0], z]])), axis=0)
+                x = x + dx
+                y = y + dy
+                if (x < 0 or x >= cell_n or y < 0 or y >= cell_n):
+                    raise ValueError("Surface points outside of map bounds")
+                    break
+        return surf_points
+    
+    def obtain_FEE_geom_params(self, intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max):
+        """
+        Obtain the geometry parameters (alpha, rho, d, w) for the FEE
+
+        by approximating the surface as a plane with 0 roll, i.e. fit a line to the points
+        "in front" of each section of the blade. This will yield the slope of the surface in the
+        direction of movement, i.e. alpha_i.
+        """
+        surf_points = self.get_surface_points(intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max)
+        test = 1
+        # Now fit surface points to a line to get the slope of the surface in the direction of movement
+        # Could do as batch, or could do for each slice and then weight each slice....
+        # TODO: RESUME HERE. Follow instructions and update overleaf
+
+    
+    def update_map_with_swept_volume(self, swept_mesh, normal, translation, normal_weight, var_h, elevation_map, cell_n, resolution, obtain_FEE_geom_params=True, GET_plane_origin=None):
+        """
+        Update the elevation map in place with the a swept volume derived from the GET. The coordinate frame is
+        assumed to be the map origin frame O to reduce coordinate conversions. This means that the swept_mesh, 
+        GET_plane_origin, normal vector, and translational vector are in the map origin frame.
+        Args:
+            swept_mesh (trimesh.Trimesh):    The swept volume of the GET in the map origin frame
             normal (np.ndarray):             The normal vector of the starting plane of the swept volume
             translation (np.ndarray):        The translation vector of the swept volume in the map frame
             normal_weight (float):           The weight of the normal vector used in computing the material movement direction
             var_h (float):                   The variance of the height of the swept volume
             elevation_map (xp.ndarray):      The full starting elevation map to update in place
-            map_center (np.ndarray):         The center of the map in the map frame
             cell_n (int):                    The number of cells in the map
             resolution (float):              The resolution of the map
+            obtain_FEE_geom_params (bool):   Whether to obtain the geometry parameters for the FEE
+            GET_plane_origin (np.ndarray):   The origin of the GET plane in the map frame (any point on the surface of the GET)
         """
-        # TODO: Rework this to properly deal with map_center. Maybe transform the swept volume to the map_center
-        if map_center[2] != 0.0:
-            raise ValueError("The map center is currently assumed to be at z=0.0. This will result in incorrect GET interaction")
         # Obtain a map frame aligned bounding box for the swept volume
         bbox = swept_mesh.bounding_box
         # Find cells in the elevation map that are within the bounding box of the swept volume
-        bb_indices, points_centered = self.bounding_box_to_map_index(bbox.vertices, map_center, cell_n, resolution)
-        min_sv_z = points_centered[0, 2]
-        max_sv_z = points_centered[1, 2]
+        map_center = np.array([0.0, 0.0, 0.0], dtype=self.data_type)
+        bb_indices, points_minmax = self.bounding_box_to_map_index(bbox.vertices, map_center, cell_n, resolution)
+        # Note that these z values are in the map origin frame
+        min_sv_z = points_minmax[0, 2]
+        max_sv_z = points_minmax[1, 2]
         # Extract submap from the elevation map and convert to a numpy array to enable ray casting with trimesh
         inds_i, inds_j = np.meshgrid(np.arange(bb_indices[0,0], bb_indices[1,0]+1), np.arange(bb_indices[0,1], bb_indices[1,1]+1), indexing='ij')
         submap = elevation_map[:,inds_i, inds_j]
@@ -1103,10 +1211,12 @@ class GETMovement:
             # Use the
             # Small epsilon to avoid self intersection
             epsilon_z = 1e-1
+            # Z is in map origin frame
             start_z = np.min([min_em_z.item(), min_sv_z]) - epsilon_z
             # Get the cell centers in the map frame
             # Combine inds_i and inds_j to get the indices of the cells in the map
             cell_inds = np.stack((inds_i[valid_cells], inds_j[valid_cells]), axis=1)
+            # Get cell_centers in the map origin frame given map_center is provided as [0,0,0]
             cell_centers = self.map_index_to_point_xy(cell_inds, map_center, cell_n, resolution)
             n_cells = cell_centers.shape[0]
             lines = np.zeros((n_cells, 2, 3), dtype=self.data_type)
@@ -1118,6 +1228,12 @@ class GETMovement:
             map_update = False
             if len(intersections) > 0:
                 print("Intersections found")
+                if obtain_FEE_geom_params:
+                    # Obtain the geometry parameters for the FEE
+                    assert GET_plane_origin is not None, "GET_plane_origin must be provided to obtain FEE geometry parameters"
+                    intersected_inds = cell_inds[intersected_lines]
+                    l_fit_max = 2.0 # TODO: Make into a parameter and class variable
+                    FEE_geom_params = self.obtain_FEE_geom_params(intersected_inds, translation[0:2], elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max)
                 # Find the direction of material movement
                 move_dir, valid_movement = self.material_movement_direction(normal, translation, normal_weight=normal_weight)
                 if not valid_movement:
@@ -1235,7 +1351,7 @@ class GETMovement:
         
         return move_dir, valid
 
-    def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, var_h, roll=None):
+    def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, var_h, roll=None, FEE=True):
         """
         Update the elevation map with the movement of the GET from T_MG0 to T_MG1
         Args:
@@ -1247,6 +1363,7 @@ class GETMovement:
             T_MG1 (np.ndarray):             The final pose of the GET in the map frame
             var_h (float):                  The variance of the height of the swept volume
             roll (float):                   The roll of the GET in degrees
+            FEE (bool):                     Whether to obtain the geometry parameters for the FEE
         """
         # First define swept volume of the GET
         # The swept volume is the volume of the material that the GET has moved through
@@ -1258,23 +1375,30 @@ class GETMovement:
             roll, _, _ = get_ext_euler_angles(transforms[0,:3,:3], xp=np)
         roll_dirs = np.array([roll]) >= 0
         pos_swept_mesh, neg_swept_mesh = sweep_thin_poly_mesh(self.GET_mesh, transforms, roll_dirs=roll_dirs, convex_interp=True)
+        # T_OG0 = T_OM @ T_MG0
+        # Where a point in represented in O can be obtained from a point represented in M by translating by -map_center
+        T_OG0 = T_MG0.copy()
+        T_OG0[:3,3] -= map_center
         # Starting face normal and translation vector are used to determine the direction of material movement (a heuristic)
-        # Obtain the normal of the oritinal surface of the GET and put in map frame
-        normal = T_MG0[:3, :3]@self.GET_mesh.face_normals[0]
+        # Obtain the normal of the original surface of the GET and put in map origin frame
+        normal = T_OG0[:3, :3]@self.GET_mesh.face_normals[0]
+        # Obtain a point on the plane of the GET in the map origin frame, used for obtaining FEE geometry parameters
+        GET_plane_origin = T_OG0[:3, 3] + self.GET_mesh.vertices[0]
         # Also get the translation between the two poses of the GET
         translation = T_MG1[:3, 3] - T_MG0[:3, 3]
+
         # TODO: Make this a model parameter
         normal_weight = 0.5
         if pos_swept_mesh is not None:
-            # Move the swept volume to the map frame
-            pos_swept_mesh.apply_transform(T_MG0)
-            self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, normal_weight, var_h, elevation_map, map_center, cell_n, resolution)
+            # Move the swept volume to the map origin frame
+            pos_swept_mesh.apply_transform(T_OG0)
+            self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, normal_weight, var_h, elevation_map, cell_n, resolution, obtain_FEE_geom_params=FEE, GET_plane_origin=GET_plane_origin)
         if neg_swept_mesh is not None:
             # Flip the direction of the normal for the negative swept volume
             normal = -normal
-            # Move the swept volume to the map frame
-            neg_swept_mesh.apply_transform(T_MG0)
-            self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, normal_weight, var_h, elevation_map, map_center, cell_n, resolution)
+            # Move the swept volume to the map origin frame
+            neg_swept_mesh.apply_transform(T_OG0)
+            self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, normal_weight, var_h, elevation_map, cell_n, resolution, obtain_FEE_geom_params=FEE, GET_plane_origin=GET_plane_origin)
         return
 
 
