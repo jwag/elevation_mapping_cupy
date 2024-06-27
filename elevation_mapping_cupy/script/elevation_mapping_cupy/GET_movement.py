@@ -892,11 +892,15 @@ class GETMovement:
         for key in GET_params.keys():
             self.GET_params[key] =np.array(GET_params[key], dtype=self.data_type)
         
+        if self.GET_params["l_surcharge_max"] > self.GET_params["l_fit_max"]:
+            warnings.warn("l_surcharge_max must be less than or equal to l_fit_max right now. Setting equal. Possibly fix this")
+            self.GET_params["l_surcharge_max"] = self.GET_params["l_fit_max"]
+        
         # Now generate the GET geometry
         # TODO: Add support for multiple planar GET surfaces at different angles
         self.GET_mesh = self.GET_model(**self.GET_params)
 
-    def simple_blade_geometry(self, blade_width=3.0, blade_height=0.6):
+    def simple_blade_geometry(self, blade_width=3.0, blade_height=0.6, **kwargs):
         """
         Define GET Geometry and Sequence of thin 4 point convex polygons
         using the trimesh library
@@ -1162,6 +1166,7 @@ class GETMovement:
         surcharge_inds = np.unique(surcharge_inds, axis=0)
         # Now calculate the volume of the surcharge
         V_Q = elevation_map[7, surcharge_inds[:,0], surcharge_inds[:,1]].sum()*resolution**2
+        V_Q = V_Q.get()
         return surf_points, valid, V_Q
     
     def obtain_FEE_em_params(self, intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max, l_surcharge_max):
@@ -1170,8 +1175,12 @@ class GETMovement:
         by approximating the surface as a plane with 0 roll, i.e. fit a line to the points
         "in front" of each section of the blade. This will yield the slope of the surface in the
         direction of movement, i.e. alpha_i.... TODO: update this
+        # Warning: l_surcharge_max must be less than or equal to l_fit_max right now, possibly fix this
         """
         surf_points, valid, V_Q = self.get_surface_points(intersected_inds, translation[0:2], elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max, l_surcharge_max)
+        if np.sum(valid) == 0:
+            warnings.warn("No valid surface points found for FEE")
+            return None
         # Only use valid surface points in FEE calc
         surf_points = [surf_point for surf_point, is_valid in zip(surf_points, valid) if is_valid]
         # Now fit surface points to a line to get the slope of the surface in the direction of movement (alpha_i)
@@ -1188,7 +1197,6 @@ class GETMovement:
         # delta_surf = [surf_point - np.array([d_meani, z_meani]) for Wi, surf_point, d_meani, z_meani in zip(W, surf_points, d_mean, z_mean)]
         # alpha = [np.arctan(np.sum(Wi * delta_surf[:,0] * delta_surf[:,1])/np.sum(Wi * delta_surf[:,0]**2)) for Wi, delta_surf in zip(W, delta_surf)]
         # Could do as batch, or could do for each slice and then weight each slice....
-        # TODO: RESUME HERE. Follow instructions and update overleaf
         X = [np.concatenate((np.ones((surf_point.shape[0], 1)),surf_point[:,0:1]),axis=1) for surf_point in surf_points]
         # Note: Beta here is the intercept and slope of the line of best fit, not the soil failure angle
         beta_hat = [np.linalg.inv(Xi.T @ np.diag(Wi) @ Xi) @ (Xi.T @ np.diag(Wi) @ surf_point[:,1]) for Xi, Wi, surf_point in zip(X, W, surf_points)]
@@ -1237,9 +1245,7 @@ class GETMovement:
         # If there are errors in the width, then this will result in errors in tracking the swept volume that accumulate
         # One way of correcting for it is to make the same assumption as we do for width, i.e. that the errors are centered around the true value
         # and that the surchare is distributed evenly across the blade width. Therefore increasing the blade width will result in a higher volume
-        # TODO: Make this a parameter
-        correct_Q_width = False
-        if correct_Q_width:
+        if self.GET_params['correct_Q_width']:
             V_q = V_Q/(w)
             V_Q = V_q*(w_corr)
         # Set the corrected width as the new width
@@ -1248,15 +1254,13 @@ class GETMovement:
         # Compute Q
         # In math - compacted_soil_moist_unit_weight: gamma (fixed value for elevation mapping),
         #           swell_factor: epsilon
-        compacted_soil_moist_unit_weight = 7000 # TODO: Make parameter and set it to 50% relative density of loam
-        swell_factor = 1.3 # TODO: Make parameter (use something reasonable)
-        Q = V_Q * compacted_soil_moist_unit_weight * swell_factor
+        Q = V_Q * self.GET_params['compacted_soil_moist_unit_weight'] / self.GET_params['swell_factor']
 
         # Create dictionary of parameters to return
         FEE_em_params = {"alpha": alpha_, "rho": rho_, "d": d_, "w": w, "Q": Q}
         return FEE_em_params
     
-    def update_map_with_swept_volume(self, swept_mesh, normal, translation, normal_weight, var_h, elevation_map, cell_n, resolution, obtain_FEE_em_params=True, GET_plane_origin=None):
+    def update_map_with_swept_volume(self, swept_mesh, normal, translation, var_h, elevation_map, cell_n, resolution, obtain_FEE_em_params=True, GET_plane_origin=None):
         """
         Update the elevation map in place with the a swept volume derived from the GET. The coordinate frame is
         assumed to be the map origin frame O to reduce coordinate conversions. This means that the swept_mesh, 
@@ -1265,7 +1269,6 @@ class GETMovement:
             swept_mesh (trimesh.Trimesh):    The swept volume of the GET in the map origin frame
             normal (np.ndarray):             The normal vector of the starting plane of the swept volume
             translation (np.ndarray):        The translation vector of the swept volume in the map frame
-            normal_weight (float):           The weight of the normal vector used in computing the material movement direction
             var_h (float):                   The variance of the height of the swept volume
             elevation_map (xp.ndarray):      The full starting elevation map to update in place
             cell_n (int):                    The number of cells in the map
@@ -1333,12 +1336,9 @@ class GETMovement:
                     # Obtain the geometry parameters for the FEE
                     assert GET_plane_origin is not None, "GET_plane_origin must be provided to obtain FEE geometry parameters"
                     intersected_inds = cell_inds[intersected_lines]
-                    l_fit_max = 2.0 # TODO: Make into a parameter and class variable
-                    l_surcharge_max = 1.0 # TODO: Make into a parameter and class variable
-                    # Warning: l_surcharge_max must be less than or equal to l_fit_max right now, possibly fix this
-                    FEE_em_params = self.obtain_FEE_em_params(intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max, l_surcharge_max)
+                    FEE_em_params = self.obtain_FEE_em_params(intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, self.GET_params['l_fit_max'], self.GET_params['l_surcharge_max'])
                 # Find the direction of material movement
-                move_dir, valid_movement = self.material_movement_direction(normal, translation, normal_weight=normal_weight)
+                move_dir, valid_movement = self.material_movement_direction(normal, translation, normal_weight=self.GET_params['move_dir_normal_weight'])
                 if not valid_movement:
                     print("Invalid movement direction, skipping update of elevation map")
                 else:
@@ -1372,15 +1372,14 @@ class GETMovement:
                         deposit_inds = deposit_inds[valid_deposit_inds]
                         pierce_dist = pierce_dist[valid_deposit_inds]
                     # Deposit the material in the new location for elevation and loose material
-                    swell_factor = 1.3 # TODO: Obtain from param
-                    delta_h_swelled = compact_moved*swell_factor + loose_moved
+                    delta_h_swelled = compact_moved*self.GET_params['swell_factor'] + loose_moved
                     # If swell factor is 1 then should be equal to pierce_dist
                     submap[0, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled
                     submap[7, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled
                     # Update the variance of the cells where material was deposited
                     # TODO: Review this method and compare to d'Adamo pg. 114 
                     # Should the pierce_dist factor in here?
-                    submap[1, deposit_inds[:,0], deposit_inds[:,1]] += var_h * swell_factor**2 
+                    submap[1, deposit_inds[:,0], deposit_inds[:,1]] += var_h * self.GET_params['swell_factor']**2 
                     # Update the upper bound
                     submap[5, deposit_inds[:,0], deposit_inds[:,1]] = submap[0, deposit_inds[:,0], deposit_inds[:,1]]
                     # Update the is_upper_bound status of the cells
@@ -1499,18 +1498,16 @@ class GETMovement:
 
         # Initialize in case of no intersections
         FEE_em_params = None
-        # TODO: Make this a model parameter
-        normal_weight = 0.5
         if pos_swept_mesh is not None:
             # Move the swept volume to the map origin frame
             pos_swept_mesh.apply_transform(T_OG0)
-            FEE_em_params = self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, normal_weight, var_h, elevation_map, cell_n, resolution, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params = self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, var_h, elevation_map, cell_n, resolution, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         if neg_swept_mesh is not None:
             # Flip the direction of the normal for the negative swept volume
             normal = -normal
             # Move the swept volume to the map origin frame
             neg_swept_mesh.apply_transform(T_OG0)
-            FEE_em_params = self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, normal_weight, var_h, elevation_map, cell_n, resolution, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params = self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, var_h, elevation_map, cell_n, resolution, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         return FEE_em_params
 
 
