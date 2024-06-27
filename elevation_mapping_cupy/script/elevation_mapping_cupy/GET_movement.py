@@ -1066,7 +1066,7 @@ class GETMovement:
     
     def get_xy_GET_distance(self, inds, point_z, t_dir, GET_plane_origin, normal, cell_n, resolution):
         """
-        Get the distance from a query point along -t_dir to the GET plane in horizontal plane
+        Get the distance from a query cell, inds, at the height point_z, along -t_dir to the GET plane.
 
         Args:
             inds (np.ndarray) (2,):             The query point xy indicies of the elevation map
@@ -1077,6 +1077,8 @@ class GETMovement:
             map_center (np.ndarray) (3,):       The center of the map in the map frame
             cell_n (int):                       The number of cells in the map
             resolution (float):                 The resolution of the map
+        Returns:
+            d (float):                          The distance from the query cell to the GET plane
         """
         # Get xy coordinates (we want it in the map origin frame so make center = 0,0,0)
         center = np.array([0.0, 0.0, 0.0], dtype=self.data_type)
@@ -1094,14 +1096,27 @@ class GETMovement:
         d = abs(d)
         return d
     
-    def get_surface_points(self, intersected_cells, t_dir, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max, l_surcharge_max):
+    def get_surface_points(self, intersected_cells, t_dir, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution):
         """
-        For each intersected cell, find the set of surface points in the direction of movement
-        and return the points in the form of (d_t, z) where d_t is the distance along the movement direction
+        For each intersected cell, find the set of surface points in the direction of movement, t_dir,
+        and return the points in the form of (d_t, z) where d_t is the distance along the movement direction.
+        Also find the volume of the surcharge, V_Q, in the region in front of the intersected cells.
 
         Args:
-            intersected_cells (np.ndarray) (n,2):   The indices of the intersected cells
-            t_dir (np.ndarray) (2,):                The direction of translation in 2d
+            intersected_cells (np.ndarray) (n,2):           The indices of the intersected cells
+            t_dir (np.ndarray) (3,):                        The direction of blade translation (not normalized)
+            elevation_map (np.ndarray) (8,cell_n,cell_n):   The elevation map
+            GET_plane_origin (np.ndarray) (3,):             The origin of the GET plane in the map frame
+            normal (np.ndarray) (3,):                       The normal of the GET plane
+            pierce_dist (np.ndarray) (n,):                  The pierce distance of the blade for each intersected cell
+            cell_n (int):                                   The number of cells in the map
+            resolution (float):                             The resolution of the map
+        Returns:
+            surf_points (list):                             A list of arrays of surface points (d_t, z) for each intersected cell
+            valid (np.ndarray) (n,):                        A boolean array indicating if the cell is valid (intersected with compact soil)
+            V_Q (float):                                    The volume of the surcharge in the region in front of the intersected cells
+
+
         """
         dx = t_dir[0]
         dy = t_dir[1]
@@ -1144,7 +1159,7 @@ class GETMovement:
                 point_z = elevation_map[0, intersected_cell_ind[0], intersected_cell_ind[1]].get() - pierce_dist[i]
                 inds = np.array([xind, yind])
                 d_t = self.get_xy_GET_distance(inds, point_z, t_dir, GET_plane_origin, normal, cell_n, resolution)
-                if (d_t > l_fit_max):
+                if (d_t >  self.GET_params['l_fit_max']):
                     assert surf_points[i].shape[0] > 0, "No points found for surface"
                     break
                 if (elevation_map[2, xind, yind] > 0.5):
@@ -1153,7 +1168,7 @@ class GETMovement:
                     q = elevation_map[7, xind, yind].get()
                     z = elevation_map[0, xind, yind].get() - q
                     # If the distance is less than or equal to the maximum length, include in Q calculation
-                    if d_t <= l_surcharge_max:
+                    if d_t <= self.GET_params['l_surcharge_max']:
                         surcharge_inds = np.concatenate((surcharge_inds, np.array([[xind, yind]])), axis=0)
                     surf_points[i] = np.concatenate((surf_points[i], np.array([[d_t[0], z]])), axis=0)
                 x = x + dx
@@ -1169,16 +1184,50 @@ class GETMovement:
         V_Q = V_Q.get()
         return surf_points, valid, V_Q
     
-    def obtain_FEE_em_params(self, intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max, l_surcharge_max):
+    def obtain_FEE_em_params(self, intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution):
         """
-        Obtain the elevation mapping derived parameters (alpha, rho, d, w, Q) for the FEE
-        by approximating the surface as a plane with 0 roll, i.e. fit a line to the points
-        "in front" of each section of the blade. This will yield the slope of the surface in the
-        direction of movement, i.e. alpha_i.... TODO: update this
-        # Warning: l_surcharge_max must be less than or equal to l_fit_max right now, possibly fix this
+        Obtain the elevation mapping derived parameters (alpha, rho, d, w, Q) for the FEE.
+        This is accomplished by finding the parameters for each "slice" and then combining them using
+        a weighted average. The surface "in front" of a slice is approximated as a plane with 0 roll, i.e. fit a 
+        line to the points "in front" of each section of the blade (represented by intersected cells), where the
+        front is defined as the cells in the direction of the translation vector up to a threshold distance, l_fit_max. 
+        This line-fit yields the slope of the surface in the direction of movement, i.e. alpha_hat, and the
+        horizontal depth of cut, i.e. d_prime. The blade inclination wrt the horizontal plane, i.e. rho_prime,
+        is obtained by projecting the GET surface normal vector onto the slicing plane. The blade inclination
+        wrt the terrain surface is then obtained as rho_hat = alpha_hat + rho_prime. The depth of cut per slice
+        is then obtained using the geometry of the FEE as d_hat = d_prime * sin(rho_hat) / sin(rho_hat - alpha_hat).
+        Then a weighted average of d_hat and alpha_hat is taken to obtain d_ and alpha_ where the weights increase
+        exponentially with d_hat. The blade inclination wrt the terrain surface, rho_, is then obtained from alpha_
+        and rho_prime. The blade width, w, is found by finding the extent of the cells centers along the approximated
+        FEE blade width, i.e. perpendicular to translation. This is found by projecting the cell centers onto the
+        perp t direction and finding the difference of the min and max values. Due to the discretization of the map,
+        and the use of cell_center intersection witht he swept volume, the blade width will always be underestimated.
+        To help ensure the blade with estimation error has a mean closer to 0, the cell resolution is added to w.
+        The volume of the surcharge, V_Q, is obtained by summing the the loose soil "in front" of the blade
+        up to a threshold distance from the blade surface, l_surcharge_max. Since the blade width is underestimated,
+        and the volume of material moved from each GET movement is also underestimated, the volume of the surcharge
+        is also likely underestimated. This is difficult to compensate for, but we can try to account for this by
+        increasing V_Q assuming a linear realtionship between the blade width and the volume of material moved.
+        This compensation is enabled by setting correct_Q_width to true. The surcharge force, Q, is then obtained
+        by multiplying V_Q by the compacted_soil_moist_unit_weight taking into account the assumed swell factor.
+        The parameters are then returned as a dictionary.
+
+        Args:
+            intersected_inds (np.ndarray) (n,2): The indices of the intersected cells
+            translation (np.ndarray) (3,):       The direction of translation
+            elevation_map (cp.ndarray) (8,n,n):  The elevation map
+            GET_plane_origin (np.ndarray) (3,):  The origin of the GET plane in the map frame
+            normal (np.ndarray) (3,):            The normal of the GET plane
+            pierce_dist (np.ndarray) (n,):       The pierce distance for each intersected cell
+            cell_n (int):                        The number of cells in the map
+            resolution (float):                  The resolution of the map
+
+        Returns:
+            FEE_params (dict):                   The FEE parameters alpha, rho, d, w, Q
         """
-        surf_points, valid, V_Q = self.get_surface_points(intersected_inds, translation[0:2], elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max, l_surcharge_max)
+        surf_points, valid, V_Q = self.get_surface_points(intersected_inds, translation[0:2], elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution)
         if np.sum(valid) == 0:
+            # Can be caused by an unitialized height map, or only intersections with loose soil
             warnings.warn("No valid surface points found for FEE")
             return None
         # Only use valid surface points in FEE calc
@@ -1190,13 +1239,7 @@ class GETMovement:
         # Scale so that W sums to 1 (I don't think this is necessary because the weighted line fit doesn't assume this)
         W = [Wi / np.sum(Wi) for Wi in W]
         # Now find the slope using weighted least squares
-        # https://en.wikipedia.org/wiki/Simple_linear_regression
         # https://en.wikipedia.org/wiki/Weighted_least_squares
-        # d_mean = [np.sum(Wi * surf_point[:,0]) for Wi, surf_point in zip(W, surf_points)]
-        # z_mean = [np.sum(Wi * surf_point[:,1]) for Wi, surf_point in zip(W, surf_points)]
-        # delta_surf = [surf_point - np.array([d_meani, z_meani]) for Wi, surf_point, d_meani, z_meani in zip(W, surf_points, d_mean, z_mean)]
-        # alpha = [np.arctan(np.sum(Wi * delta_surf[:,0] * delta_surf[:,1])/np.sum(Wi * delta_surf[:,0]**2)) for Wi, delta_surf in zip(W, delta_surf)]
-        # Could do as batch, or could do for each slice and then weight each slice....
         X = [np.concatenate((np.ones((surf_point.shape[0], 1)),surf_point[:,0:1]),axis=1) for surf_point in surf_points]
         # Note: Beta here is the intercept and slope of the line of best fit, not the soil failure angle
         beta_hat = [np.linalg.inv(Xi.T @ np.diag(Wi) @ Xi) @ (Xi.T @ np.diag(Wi) @ surf_point[:,1]) for Xi, Wi, surf_point in zip(X, W, surf_points)]
@@ -1336,7 +1379,7 @@ class GETMovement:
                     # Obtain the geometry parameters for the FEE
                     assert GET_plane_origin is not None, "GET_plane_origin must be provided to obtain FEE geometry parameters"
                     intersected_inds = cell_inds[intersected_lines]
-                    FEE_em_params = self.obtain_FEE_em_params(intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, self.GET_params['l_fit_max'], self.GET_params['l_surcharge_max'])
+                    FEE_em_params = self.obtain_FEE_em_params(intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution)
                 # Find the direction of material movement
                 move_dir, valid_movement = self.material_movement_direction(normal, translation, normal_weight=self.GET_params['move_dir_normal_weight'])
                 if not valid_movement:
