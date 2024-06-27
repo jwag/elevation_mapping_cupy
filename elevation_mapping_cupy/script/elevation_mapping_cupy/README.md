@@ -61,6 +61,7 @@ See this [docs page](https://leggedrobotics.github.io/elevation_mapping_cupy/usa
 * In python ros node the variance due to change in time is only updated with a fixed value of time_variance whenever the timer based callback is called. The rate is set by another parameter update_variance_fps. A better way of parameterizing this would be to set the rate at which you want to have the variance evolve and then set a timer for how often this update should be performed. Then at each call the amount of temporal variance to add could be calcualted based on a timestamp differential.
 * Deal with datatype on trimesh code
 * Rethink the use of center for transforming coordinates. May not be necessary if our transforms are already wrt map frame not world frame...
+* Rework code to make better use of **kwargs to clean up number of arguments and ordering issues
 
 Next Steps:
 * Clean up functions and add note about how intersections could be a problem for us if blade is rotated in place

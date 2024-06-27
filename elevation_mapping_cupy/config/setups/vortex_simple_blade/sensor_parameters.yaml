@@ -55,5 +55,5 @@ subscribers:
     data_type: GET
     GET_model_name: 'simple_blade'
     simple_blade_GET_params:
-      blade_width: 3.0
-      blade_height: 0.6
+      blade_width: 3.164
+      blade_height: 0.660

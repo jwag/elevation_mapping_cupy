@@ -61,9 +61,11 @@ def line_mesh_intersection(line, mesh, coincidence_tol=1e-6):
 
     # Find the intersection between the edges of boundary1 with mesh2
     # run the mesh- ray query
+    # We only want the first intersection
     locations, index_ray, index_tri = mesh.ray.intersects_location(
         ray_origins=ray_origins,
-        ray_directions=ray_dirs)
+        ray_directions=ray_dirs,
+        multiple_hits=False) # I think this will return the hit that is the shortest distance, but not sure
     if len(locations) == 0:
         intersections = []
         intersected_lines = []
@@ -1088,7 +1090,7 @@ class GETMovement:
         d = abs(d)
         return d
     
-    def get_surface_points(self, intersected_cells, t_dir, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max):
+    def get_surface_points(self, intersected_cells, t_dir, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max, l_surcharge_max):
         """
         For each intersected cell, find the set of surface points in the direction of movement
         and return the points in the form of (d_t, z) where d_t is the distance along the movement direction
@@ -1101,9 +1103,13 @@ class GETMovement:
         dy = t_dir[1]
 
         n = intersected_cells.shape[0]
+        valid = np.ones(n, dtype=bool)
+        # Array holding indices of cells where we want to include the surcharge from
+        # Warning: l_surcharge_max must be less than or equal to l_fit_max right now, possibly fix this
+        surcharge_inds = np.zeros((0,2), dtype=int)
 
         # Obtain the points to fit the plane to in coordinates of (d_t, z)
-        # where d_t is the distance along the movement direction
+        # where d_t is the distance along the movement direction and z is the height of the compacted soil surface
         surf_points = [np.zeros((0,2)) for _ in range(n)]
 
         # This is a digitial differential analyzer (DDA) line algorithm
@@ -1118,12 +1124,19 @@ class GETMovement:
         for i, intersected_cell_ind in enumerate(intersected_cells):
             x = intersected_cell_ind[0]
             y = intersected_cell_ind[1]
-            while True:
+            # Need to determine if the intersection is only with the loose soil or with the compacted surface too
+            if (elevation_map[7, intersected_cell_ind[0], intersected_cell_ind[1]] > pierce_dist[i]):
+                # If the pierce distance is smaller than loose soil height, then the blade doesn't contact the compacted surface
+                # for cell ind intersected_cell_ind[i]. Mark as invalid for downstream use
+                valid[i] = False
+            # Only trace the line if the cell is valid
+            while valid[i]:
                 xind = int(x)
                 yind = int(y)
                 # We want to trace the to the blade surface plane from query cell at the height of the 
                 # intersection of for the intersected cell to best obtain the distance along the movement direction
                 # TODO: Check that this is the same as the intersection height
+                # Obtain the height of the intersection for projection onto the blade surface in get_xy_GET_distance()
                 point_z = elevation_map[0, intersected_cell_ind[0], intersected_cell_ind[1]].get() - pierce_dist[i]
                 inds = np.array([xind, yind])
                 d_t = self.get_xy_GET_distance(inds, point_z, t_dir, GET_plane_origin, normal, cell_n, resolution)
@@ -1132,31 +1145,118 @@ class GETMovement:
                     break
                 if (elevation_map[2, xind, yind] > 0.5):
                     # Only add valid points to the surface points
-                    z = elevation_map[0, xind, yind].get()
+                    # Obtain the point on the surface of the compacted soil, i.e. cell_height - loose_soil_height
+                    q = elevation_map[7, xind, yind].get()
+                    z = elevation_map[0, xind, yind].get() - q
+                    # If the distance is less than or equal to the maximum length, include in Q calculation
+                    if d_t <= l_surcharge_max:
+                        surcharge_inds = np.concatenate((surcharge_inds, np.array([[xind, yind]])), axis=0)
                     surf_points[i] = np.concatenate((surf_points[i], np.array([[d_t[0], z]])), axis=0)
                 x = x + dx
                 y = y + dy
                 if (x < 0 or x >= cell_n or y < 0 or y >= cell_n):
                     raise ValueError("Surface points outside of map bounds")
                     break
-        return surf_points
+            
+        # First get unique surcharge inds so we don't double count cells between slices
+        surcharge_inds = np.unique(surcharge_inds, axis=0)
+        # Now calculate the volume of the surcharge
+        V_Q = elevation_map[7, surcharge_inds[:,0], surcharge_inds[:,1]].sum()*resolution**2
+        return surf_points, valid, V_Q
     
-    def obtain_FEE_geom_params(self, intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max):
+    def obtain_FEE_em_params(self, intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max, l_surcharge_max):
         """
-        Obtain the geometry parameters (alpha, rho, d, w) for the FEE
-
+        Obtain the elevation mapping derived parameters (alpha, rho, d, w, Q) for the FEE
         by approximating the surface as a plane with 0 roll, i.e. fit a line to the points
         "in front" of each section of the blade. This will yield the slope of the surface in the
-        direction of movement, i.e. alpha_i.
+        direction of movement, i.e. alpha_i.... TODO: update this
         """
-        surf_points = self.get_surface_points(intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max)
-        test = 1
-        # Now fit surface points to a line to get the slope of the surface in the direction of movement
+        surf_points, valid, V_Q = self.get_surface_points(intersected_inds, translation[0:2], elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max, l_surcharge_max)
+        # Only use valid surface points in FEE calc
+        surf_points = [surf_point for surf_point, is_valid in zip(surf_points, valid) if is_valid]
+        # Now fit surface points to a line to get the slope of the surface in the direction of movement (alpha_i)
+        # First compute weights for the points
+        surf_interp_coeff = 3.0
+        W = [np.exp(-surf_interp_coeff * surf_point[:,0]) for surf_point in surf_points]
+        # Scale so that W sums to 1 (I don't think this is necessary because the weighted line fit doesn't assume this)
+        W = [Wi / np.sum(Wi) for Wi in W]
+        # Now find the slope using weighted least squares
+        # https://en.wikipedia.org/wiki/Simple_linear_regression
+        # https://en.wikipedia.org/wiki/Weighted_least_squares
+        # d_mean = [np.sum(Wi * surf_point[:,0]) for Wi, surf_point in zip(W, surf_points)]
+        # z_mean = [np.sum(Wi * surf_point[:,1]) for Wi, surf_point in zip(W, surf_points)]
+        # delta_surf = [surf_point - np.array([d_meani, z_meani]) for Wi, surf_point, d_meani, z_meani in zip(W, surf_points, d_mean, z_mean)]
+        # alpha = [np.arctan(np.sum(Wi * delta_surf[:,0] * delta_surf[:,1])/np.sum(Wi * delta_surf[:,0]**2)) for Wi, delta_surf in zip(W, delta_surf)]
         # Could do as batch, or could do for each slice and then weight each slice....
         # TODO: RESUME HERE. Follow instructions and update overleaf
+        X = [np.concatenate((np.ones((surf_point.shape[0], 1)),surf_point[:,0:1]),axis=1) for surf_point in surf_points]
+        # Note: Beta here is the intercept and slope of the line of best fit, not the soil failure angle
+        beta_hat = [np.linalg.inv(Xi.T @ np.diag(Wi) @ Xi) @ (Xi.T @ np.diag(Wi) @ surf_point[:,1]) for Xi, Wi, surf_point in zip(X, W, surf_points)]
+        alpha_hat = [np.arctan(beta_hat_i[1]) for beta_hat_i in beta_hat]
 
+        # Obtain rho_prime
+        # Obtain the (unscaled) normal vector of the slicing plane
+        # which is defined as the cross product of the translation vector and the vertical/gravity vector
+        # The direction shouldn't matter since we are using this for the projection onto the plane
+        sl_n = np.cross(translation, np.array([0.0, 0.0, 1.0]))
+        # Project the GET surface normal vector onto the slicing plane
+        n_t = normal - np.dot(normal, sl_n) / np.dot(sl_n, sl_n) * sl_n
+        # Obtain the blade inclination wrt the horizontal plane
+        rho_prime = np.arctan(n_t[0]/n_t[2])
+        # rho_i = alpha_i + rho_prime
+        rho_hat = [alpha_i + rho_prime for alpha_i in alpha_hat]
+
+        # d_prime = beta_hat_i[0]
+        d_hat = [beta_hat_i[0]*np.sin(rho_i)/np.sin(rho_i - alpha_i) for beta_hat_i, alpha_i, rho_i in zip(beta_hat, alpha_hat, rho_hat)]
+
+        # Perform another weighted average to obtain d_ and alpha_. Then compute rho_ from rho_prime and alpha_
+        # Define weights as a function of the depth of cut d_hat.
+        depth_weight_avg_coeff = 3.0
+        d_hat_np = np.array(d_hat)
+        W_d = np.exp(depth_weight_avg_coeff*d_hat_np)
+        W_d  = W_d/np.sum(W_d) # Must sum to 1 for weighted average
+        d_ = np.dot(W_d, d_hat_np)
+        alpha_ = np.sum([Wi * alpha_i for Wi, alpha_i in zip(W_d, alpha_hat)], axis=0)
+        rho_ = alpha_ + rho_prime
+
+        # Find w by finding the extent of the cells centers along the perp t direction by projecting the cell centers onto the 
+        # perp t direction and finding the min and max values.
+        perp_t_norm = np.array([translation[1], -translation[0]])
+        perp_t_norm = perp_t_norm / np.linalg.norm(perp_t_norm)
+        # Get xy coordinates (we want it in the map origin frame so make center = 0,0,0)
+        center = np.array([0.0, 0.0, 0.0], dtype=self.data_type)
+        # TODO: Perform this elsewhere so we don't have to repeat this calc which is done in get_surface_points()
+        points_xy = self.map_index_to_point_xy(intersected_inds[valid], center, cell_n, resolution)
+        # Project the points onto the perp t direction
+        points_perp_t = np.dot(points_xy, perp_t_norm)
+        w = np.max(points_perp_t) - np.min(points_perp_t)
+        # This will always be an underestimate of the true blade width due to the discretization
+        # We can compensate for this partially by increasing w so that the errors are more centered around the true value on average
+        dw = resolution
+        w_corr = w + dw
+        # If there are errors in the width, then this will result in errors in tracking the swept volume that accumulate
+        # One way of correcting for it is to make the same assumption as we do for width, i.e. that the errors are centered around the true value
+        # and that the surchare is distributed evenly across the blade width. Therefore increasing the blade width will result in a higher volume
+        # TODO: Make this a parameter
+        correct_Q_width = False
+        if correct_Q_width:
+            V_q = V_Q/(w)
+            V_Q = V_q*(w_corr)
+        # Set the corrected width as the new width
+        w = w_corr
+        
+        # Compute Q
+        # In math - compacted_soil_moist_unit_weight: gamma (fixed value for elevation mapping),
+        #           swell_factor: epsilon
+        compacted_soil_moist_unit_weight = 7000 # TODO: Make parameter and set it to 50% relative density of loam
+        swell_factor = 1.3 # TODO: Make parameter (use something reasonable)
+        Q = V_Q * compacted_soil_moist_unit_weight * swell_factor
+
+        # Create dictionary of parameters to return
+        FEE_em_params = {"alpha": alpha_, "rho": rho_, "d": d_, "w": w, "Q": Q}
+        return FEE_em_params
     
-    def update_map_with_swept_volume(self, swept_mesh, normal, translation, normal_weight, var_h, elevation_map, cell_n, resolution, obtain_FEE_geom_params=True, GET_plane_origin=None):
+    def update_map_with_swept_volume(self, swept_mesh, normal, translation, normal_weight, var_h, elevation_map, cell_n, resolution, obtain_FEE_em_params=True, GET_plane_origin=None):
         """
         Update the elevation map in place with the a swept volume derived from the GET. The coordinate frame is
         assumed to be the map origin frame O to reduce coordinate conversions. This means that the swept_mesh, 
@@ -1170,7 +1270,7 @@ class GETMovement:
             elevation_map (xp.ndarray):      The full starting elevation map to update in place
             cell_n (int):                    The number of cells in the map
             resolution (float):              The resolution of the map
-            obtain_FEE_geom_params (bool):   Whether to obtain the geometry parameters for the FEE
+            obtain_FEE_em_params (bool):     Whether to obtain the EM derived parameters for the FEE
             GET_plane_origin (np.ndarray):   The origin of the GET plane in the map frame (any point on the surface of the GET)
         """
         # Obtain a map frame aligned bounding box for the swept volume
@@ -1201,6 +1301,7 @@ class GETMovement:
                 # TODO: We could also update the variance of the cells that are not intersected,
                 #       e.g. if the variance is high then we can reduce it if our swept volume is close to the ground
                 update_elevation = False
+        FEE_em_params = None
         # Debugging Override
         # update_elevation = True
         if update_elevation:
@@ -1228,12 +1329,14 @@ class GETMovement:
             map_update = False
             if len(intersections) > 0:
                 print("Intersections found")
-                if obtain_FEE_geom_params:
+                if obtain_FEE_em_params:
                     # Obtain the geometry parameters for the FEE
                     assert GET_plane_origin is not None, "GET_plane_origin must be provided to obtain FEE geometry parameters"
                     intersected_inds = cell_inds[intersected_lines]
                     l_fit_max = 2.0 # TODO: Make into a parameter and class variable
-                    FEE_geom_params = self.obtain_FEE_geom_params(intersected_inds, translation[0:2], elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max)
+                    l_surcharge_max = 1.0 # TODO: Make into a parameter and class variable
+                    # Warning: l_surcharge_max must be less than or equal to l_fit_max right now, possibly fix this
+                    FEE_em_params = self.obtain_FEE_em_params(intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution, l_fit_max, l_surcharge_max)
                 # Find the direction of material movement
                 move_dir, valid_movement = self.material_movement_direction(normal, translation, normal_weight=normal_weight)
                 if not valid_movement:
@@ -1243,10 +1346,12 @@ class GETMovement:
                     # Get the indices of the intersected cells
                     intersected_cells = cell_inds[intersected_lines] - bb_indices[0]
                     # Update the elevation map with the new heights
+                    delta_h = submap[0, intersected_cells[:,0], intersected_cells[:,1]] - intersections[:,2]
                     submap[0, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
                     # Ensure that loose material is removed from the cells if there is any
                     loose_remaining = np.maximum(submap[7, intersected_cells[:,0], intersected_cells[:,1]]- pierce_dist, 0.0)
                     loose_moved = submap[7, intersected_cells[:,0], intersected_cells[:,1]] - loose_remaining
+                    compact_moved = delta_h - loose_moved # Should be gaurateed to be positive or 0
                     submap[7, intersected_cells[:,0], intersected_cells[:,1]] = loose_remaining
                     # ["elevation": 0, "variance": 1, "is_valid": 2, "traversability": 3, "time": 4, "upper_bound": 5, "is_upper_bound": 6, "elevation_loose": 7]` 
                     # Update the variance of the cells. Using simple variance update for now
@@ -1267,10 +1372,15 @@ class GETMovement:
                         deposit_inds = deposit_inds[valid_deposit_inds]
                         pierce_dist = pierce_dist[valid_deposit_inds]
                     # Deposit the material in the new location for elevation and loose material
-                    submap[0, deposit_inds[:,0], deposit_inds[:,1]] += pierce_dist
-                    submap[7, deposit_inds[:,0], deposit_inds[:,1]] += pierce_dist
+                    swell_factor = 1.3 # TODO: Obtain from param
+                    delta_h_swelled = compact_moved*swell_factor + loose_moved
+                    # If swell factor is 1 then should be equal to pierce_dist
+                    submap[0, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled
+                    submap[7, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled
                     # Update the variance of the cells where material was deposited
-                    submap[1, deposit_inds[:,0], deposit_inds[:,1]] += var_h
+                    # TODO: Review this method and compare to d'Adamo pg. 114 
+                    # Should the pierce_dist factor in here?
+                    submap[1, deposit_inds[:,0], deposit_inds[:,1]] += var_h * swell_factor**2 
                     # Update the upper bound
                     submap[5, deposit_inds[:,0], deposit_inds[:,1]] = submap[0, deposit_inds[:,0], deposit_inds[:,1]]
                     # Update the is_upper_bound status of the cells
@@ -1291,7 +1401,7 @@ class GETMovement:
             if map_update:
                 # Copy the updated submap back to the elevation map
                 elevation_map[:,inds_i, inds_j] = submap
-        return
+        return FEE_em_params
 
     def material_movement_direction(self, normal, translation, normal_weight=0.5):
         """
@@ -1387,19 +1497,21 @@ class GETMovement:
         # Also get the translation between the two poses of the GET
         translation = T_MG1[:3, 3] - T_MG0[:3, 3]
 
+        # Initialize in case of no intersections
+        FEE_em_params = None
         # TODO: Make this a model parameter
         normal_weight = 0.5
         if pos_swept_mesh is not None:
             # Move the swept volume to the map origin frame
             pos_swept_mesh.apply_transform(T_OG0)
-            self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, normal_weight, var_h, elevation_map, cell_n, resolution, obtain_FEE_geom_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params = self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, normal_weight, var_h, elevation_map, cell_n, resolution, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         if neg_swept_mesh is not None:
             # Flip the direction of the normal for the negative swept volume
             normal = -normal
             # Move the swept volume to the map origin frame
             neg_swept_mesh.apply_transform(T_OG0)
-            self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, normal_weight, var_h, elevation_map, cell_n, resolution, obtain_FEE_geom_params=FEE, GET_plane_origin=GET_plane_origin)
-        return
+            FEE_em_params = self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, normal_weight, var_h, elevation_map, cell_n, resolution, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+        return FEE_em_params
 
 
 if __name__ == "__main__":

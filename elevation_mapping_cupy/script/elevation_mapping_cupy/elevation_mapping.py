@@ -498,7 +498,8 @@ class ElevationMap:
             var_h (float):                              Variance of the height measurement
             roll (float):                               Roll angle of the GET frame w.r.t. the map frame
         Returns:
-            None:
+            FEE_em_params:                              FEE parameters obtained from map as dictionary containing:
+                                                        d, alpha, rho, w, Q (None if no valid GET movement is detected)
         """
         T_MG0 = np.asarray(T_MG0, dtype=self.data_type)
         T_MG1 = np.asarray(T_MG1, dtype=self.data_type)
@@ -507,7 +508,7 @@ class ElevationMap:
             position = np.array([0, 0, 0], dtype=self.data_type)
             self.get_position(position)
             # TODO: Make the varh derived from the pose uncertainty and use a sensor model
-            self.GETs[GET_ID].update_map_with_GET_movement(
+            FEE_em_params = self.GETs[GET_ID].update_map_with_GET_movement(
                 self.elevation_map,
                 position,
                 self.cell_n,
@@ -517,6 +518,7 @@ class ElevationMap:
                 var_h,
                 roll,
             )
+        return FEE_em_params
 
     def input_pointcloud(
         self,
