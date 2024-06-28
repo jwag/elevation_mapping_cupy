@@ -64,3 +64,4 @@ subscribers:
       correct_Q_width: True # Adjust Q to compensate for discretization
       l_fit_max: 2.0 # The maximum distance from the blade to find surface points for finding surface plane
       l_surcharge_max: 1.0 # The maximum distance from the blade to include loose soil in the surcharge calculation
+      depth_weight_avg_coeff: 3.0 # Parameter for depth based exponential weighted average of FEE params

@@ -1192,10 +1192,11 @@ class GETMovement:
         line to the points "in front" of each section of the blade (represented by intersected cells), where the
         front is defined as the cells in the direction of the translation vector up to a threshold distance, l_fit_max. 
         This line-fit yields the slope of the surface in the direction of movement, i.e. alpha_hat, and the
-        horizontal depth of cut, i.e. d_prime. The blade inclination wrt the horizontal plane, i.e. rho_prime,
-        is obtained by projecting the GET surface normal vector onto the slicing plane. The blade inclination
-        wrt the terrain surface is then obtained as rho_hat = alpha_hat + rho_prime. The depth of cut per slice
-        is then obtained using the geometry of the FEE as d_hat = d_prime * sin(rho_hat) / sin(rho_hat - alpha_hat).
+        height of the point where the approximated surface contacts the blade. The horizontal depth of cut,
+        i.e. d_prime, can be derived from this point by subtracting the intersection depth. The blade inclination
+        wrt the horizontal plane, i.e. rho_prime, is obtained by projecting the GET surface normal vector onto the 
+        slicing plane. The blade inclination wrt the terrain surface is then obtained as rho_hat = alpha_hat + rho_prime.
+        From the FEE geometry, the depth of cut per slice is d_hat = d_prime * sin(rho_hat) / sin(rho_hat - alpha_hat).
         Then a weighted average of d_hat and alpha_hat is taken to obtain d_ and alpha_ where the weights increase
         exponentially with d_hat. The blade inclination wrt the terrain surface, rho_, is then obtained from alpha_
         and rho_prime. The blade width, w, is found by finding the extent of the cells centers along the approximated
@@ -1242,8 +1243,8 @@ class GETMovement:
         # https://en.wikipedia.org/wiki/Weighted_least_squares
         X = [np.concatenate((np.ones((surf_point.shape[0], 1)),surf_point[:,0:1]),axis=1) for surf_point in surf_points]
         # Note: Beta here is the intercept and slope of the line of best fit, not the soil failure angle
-        beta_hat = [np.linalg.inv(Xi.T @ np.diag(Wi) @ Xi) @ (Xi.T @ np.diag(Wi) @ surf_point[:,1]) for Xi, Wi, surf_point in zip(X, W, surf_points)]
-        alpha_hat = [np.arctan(beta_hat_i[1]) for beta_hat_i in beta_hat]
+        beta_hat = np.array([np.linalg.inv(Xi.T @ np.diag(Wi) @ Xi) @ (Xi.T @ np.diag(Wi) @ surf_point[:,1]) for Xi, Wi, surf_point in zip(X, W, surf_points)], dtype=self.data_type)
+        alpha_hat = np.arctan(beta_hat[:,1])
 
         # Obtain rho_prime
         # Obtain the (unscaled) normal vector of the slicing plane
@@ -1255,19 +1256,21 @@ class GETMovement:
         # Obtain the blade inclination wrt the horizontal plane
         rho_prime = np.arctan(n_t[0]/n_t[2])
         # rho_i = alpha_i + rho_prime
-        rho_hat = [alpha_i + rho_prime for alpha_i in alpha_hat]
+        rho_hat = alpha_hat + rho_prime
 
-        # d_prime = beta_hat_i[0]
-        d_hat = [beta_hat_i[0]*np.sin(rho_i)/np.sin(rho_i - alpha_i) for beta_hat_i, alpha_i, rho_i in zip(beta_hat, alpha_hat, rho_hat)]
+        # Find the difference between the lowest contacted cell and the point where the compact surface
+        # approximated by the line fit intersects the blade surface
+        intersections = (elevation_map[0, intersected_inds[valid,0], intersected_inds[valid,1]].get() - pierce_dist[valid])
+        # d_prime = beta_hat_i[0] - intersections[i]
+        d_hat = (beta_hat[:,0]-intersections)*np.sin(rho_hat)/np.sin(rho_hat - alpha_hat)
 
         # Perform another weighted average to obtain d_ and alpha_. Then compute rho_ from rho_prime and alpha_
         # Define weights as a function of the depth of cut d_hat.
-        depth_weight_avg_coeff = 3.0
         d_hat_np = np.array(d_hat)
-        W_d = np.exp(depth_weight_avg_coeff*d_hat_np)
+        W_d = np.exp(self.GET_params['depth_weight_avg_coeff']*d_hat_np)
         W_d  = W_d/np.sum(W_d) # Must sum to 1 for weighted average
         d_ = np.dot(W_d, d_hat_np)
-        alpha_ = np.sum([Wi * alpha_i for Wi, alpha_i in zip(W_d, alpha_hat)], axis=0)
+        alpha_ = np.dot(W_d, alpha_hat)
         rho_ = alpha_ + rho_prime
 
         # Find w by finding the extent of the cells centers along the perp t direction by projecting the cell centers onto the 
@@ -1417,7 +1420,7 @@ class GETMovement:
                     # Deposit the material in the new location for elevation and loose material
                     delta_h_swelled = compact_moved*self.GET_params['swell_factor'] + loose_moved
                     # If swell factor is 1 then should be equal to pierce_dist
-                    submap[0, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled
+                    submap[0, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled # Got a bug here when I backed up and re ran over terrain. TODO fix it
                     submap[7, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled
                     # Update the variance of the cells where material was deposited
                     # TODO: Review this method and compare to d'Adamo pg. 114 
