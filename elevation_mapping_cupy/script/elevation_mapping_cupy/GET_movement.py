@@ -1052,10 +1052,11 @@ class GETMovement:
             x = intersected_cell_ind[0]
             y = intersected_cell_ind[1]
             while True:
-                xind = int(x)
-                yind = int(y)
+                # Was a floor/int(), but since we are dealing with cell centers this should round to the nearest cell center
+                xind = round(x)
+                yind = round(y)
                 if (occ_map[xind, yind] == False):
-                    deposit_location[i] = np.array([x, y])
+                    deposit_location[i] = np.array([xind, yind])
                     break
                 x = x + dx
                 y = y + dy
@@ -1150,8 +1151,9 @@ class GETMovement:
                 valid[i] = False
             # Only trace the line if the cell is valid
             while valid[i]:
-                xind = int(x)
-                yind = int(y)
+                # Was a floor/int(), but since we are dealing with cell centers this should round to the nearest cell center
+                xind = round(x)
+                yind = round(y)
                 # We want to trace the to the blade surface plane from query cell at the height of the 
                 # intersection of for the intersected cell to best obtain the distance along the movement direction
                 # TODO: Check that this is the same as the intersection height
@@ -1229,14 +1231,13 @@ class GETMovement:
         surf_points, valid, V_Q = self.get_surface_points(intersected_inds, translation[0:2], elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution)
         if np.sum(valid) == 0:
             # Can be caused by an unitialized height map, or only intersections with loose soil
-            warnings.warn("No valid surface points found for FEE")
+            # warnings.warn("No valid surface points found for FEE")
             return None
         # Only use valid surface points in FEE calc
         surf_points = [surf_point for surf_point, is_valid in zip(surf_points, valid) if is_valid]
         # Now fit surface points to a line to get the slope of the surface in the direction of movement (alpha_i)
         # First compute weights for the points
-        surf_interp_coeff = 3.0
-        W = [np.exp(-surf_interp_coeff * surf_point[:,0]) for surf_point in surf_points]
+        W = [np.exp(-self.GET_params['surf_interp_coeff'] * surf_point[:,0]) for surf_point in surf_points]
         # Scale so that W sums to 1 (I don't think this is necessary because the weighted line fit doesn't assume this)
         W = [Wi / np.sum(Wi) for Wi in W]
         # Now find the slope using weighted least squares
@@ -1288,12 +1289,20 @@ class GETMovement:
         # We can compensate for this partially by increasing w so that the errors are more centered around the true value on average
         dw = resolution
         w_corr = w + dw
+        
+        # Limit V_Q by the maximum surcharge volume per unit width to help deal with not modelling erosion/spill
+        V_q = V_Q/(w) # fix possible divide by 0
+        V_q_lim = self.GET_params['max_surcharge_vol_per_unit_width']
+        if V_q_lim >= 0:
+            V_q = min(V_q, V_q_lim)
         # If there are errors in the width, then this will result in errors in tracking the swept volume that accumulate
         # One way of correcting for it is to make the same assumption as we do for width, i.e. that the errors are centered around the true value
         # and that the surchare is distributed evenly across the blade width. Therefore increasing the blade width will result in a higher volume
         if self.GET_params['correct_Q_width']:
-            V_q = V_Q/(w)
             V_Q = V_q*(w_corr)
+        else:
+            V_Q = V_q*w
+        
         # Set the corrected width as the new width
         w = w_corr
         
@@ -1410,13 +1419,35 @@ class GETMovement:
                     # Deposit the material in the a new location
                     # Find where to deposit the material based on the movement direction
                     deposit_inds = self.find_deposit_locations(intersected_cells, move_dir, submap.shape[1:3])
+
+                    # Deal with fact that some deposit locations may be the same. Need to ensure deposits are conserved
+                    unique_deposit_inds, unique_inds, unique_cnt = np.unique(deposit_inds, axis=0, return_index=True, return_counts=True)
+                    if np.any(unique_cnt > 1):
+                        debug = 1
+                        duplicates = unique_deposit_inds[unique_cnt > 1]
+                        # Combine the material moved to the same location to avoid overwritting
+                        # and ensure material is conserved
+                        for dup in duplicates:
+                            dup_inds = np.arange(deposit_inds.shape[0])
+                            dup_inds = dup_inds[np.all(dup == deposit_inds, axis=1)]
+                            # dup_inds[0] should be the first index of the duplicates and in the unique_inds
+                            compact_moved[dup_inds[0]] += compact_moved[dup_inds[1:]].sum()
+                            loose_moved[dup_inds[0]] += loose_moved[dup_inds[1:]].sum()
+                        # Now update deposit_inds
+                        deposit_inds = unique_deposit_inds
+                        # And remove the non-unique elements from the moved arrays
+                        compact_moved = compact_moved[unique_inds]
+                        loose_moved = loose_moved[unique_inds]
+                    
                     valid_deposit_inds = submap[2, deposit_inds[:,0], deposit_inds[:,1]] > 0.5
                     # Handle case where the material is deposited outside the valid portion of the map
                     # a deposition locaiton may need to be a a cell that is within the map,
                     if not np.all(valid_deposit_inds):
                         warnings.warn("Some deposit locations are not valid. Material not conseved")
                         deposit_inds = deposit_inds[valid_deposit_inds]
-                        pierce_dist = pierce_dist[valid_deposit_inds]
+                        # pierce_dist = pierce_dist[valid_deposit_inds]
+                        compact_moved = compact_moved[valid_deposit_inds]
+                        loose_moved = loose_moved[valid_deposit_inds]
                     # Deposit the material in the new location for elevation and loose material
                     delta_h_swelled = compact_moved*self.GET_params['swell_factor'] + loose_moved
                     # If swell factor is 1 then should be equal to pierce_dist
@@ -1538,7 +1569,7 @@ class GETMovement:
         # Obtain the normal of the original surface of the GET and put in map origin frame
         normal = T_OG0[:3, :3]@self.GET_mesh.face_normals[0]
         # Obtain a point on the plane of the GET in the map origin frame, used for obtaining FEE geometry parameters
-        GET_plane_origin = T_OG0[:3, 3] + self.GET_mesh.vertices[0]
+        GET_plane_origin = T_OG0[:3, :3]@self.GET_mesh.vertices[0] + T_OG0[:3, 3]
         # Also get the translation between the two poses of the GET
         translation = T_MG1[:3, 3] - T_MG0[:3, 3]
 
