@@ -1178,6 +1178,10 @@ class GETMovement:
                 if (x < 0 or x >= cell_n or y < 0 or y >= cell_n):
                     raise ValueError("Surface points outside of map bounds")
                     break
+            # Check if more than 1 surface point was found, i.e. a point beyond the intsection point
+            if surf_points[i].shape[0] <= 1 and valid[i]:
+                valid[i] = False
+                warnings.warn("Insufficient surface points found for FEE. Cell may be invalid.")
             
         # First get unique surcharge inds so we don't double count cells between slices
         surcharge_inds = np.unique(surcharge_inds, axis=0)
@@ -1273,6 +1277,8 @@ class GETMovement:
         d_ = np.dot(W_d, d_hat_np)
         alpha_ = np.dot(W_d, alpha_hat)
         rho_ = alpha_ + rho_prime
+        # Obtain the depth of cut wrt the horizontal plane that intersects the blade at at the blade-surface intersection point
+        d_prime = d_ *  np.sin(rho_ - alpha_) /np.sin(rho_)
 
         # Find w by finding the extent of the cells centers along the perp t direction by projecting the cell centers onto the 
         # perp t direction and finding the min and max values.
@@ -1312,7 +1318,7 @@ class GETMovement:
         Q = V_Q * self.GET_params['compacted_soil_moist_unit_weight'] / self.GET_params['swell_factor']
 
         # Create dictionary of parameters to return
-        FEE_em_params = {"alpha": alpha_, "rho": rho_, "d": d_, "w": w, "Q": Q}
+        FEE_em_params = {"alpha": alpha_, "rho": rho_, "d": d_, "w": w, "Q": Q, "d_prime": d_prime}
         return FEE_em_params
     
     def update_map_with_swept_volume(self, swept_mesh, normal, translation, var_h, elevation_map, cell_n, resolution, obtain_FEE_em_params=True, GET_plane_origin=None):

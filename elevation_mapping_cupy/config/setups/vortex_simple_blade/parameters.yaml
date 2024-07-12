@@ -1,7 +1,7 @@
 #### Basic parameters ########
-resolution: 0.2                                # resolution in m.
+resolution: 0.1                                # resolution in m.
 map_length: 30.0                                 # map's size in m.
-mahalanobis_thresh: 2.0                         # points outside this distance is outlier.
+mahalanobis_thresh: 2000.0                         # points outside this distance is outlier.
 outlier_variance: 0.01                          # if point is outlier, add this value to the cell.
 drift_compensation_variance_inler: 0.05         # cells under this value is used for drift compensation.
 max_drift: 0.1                                  # drift compensation happens only the drift is smaller than this value (for safety)
