@@ -1360,6 +1360,7 @@ class GETMovement:
         V_q_lim = self.GET_params['max_surcharge_vol_per_unit_width']
         if V_q_lim >= 0:
             V_q = np.minimum(V_q, V_q_lim)
+        V_q = np.maximum(V_q, 0.0) # Ensure that the surcharge volume is non-negative
         # If there are errors in the width, then this will result in errors in tracking the swept volume that accumulate
         # One way of correcting for it is to make the same assumption as we do for width, i.e. that the errors are centered around the true value
         # and that the surchare is distributed evenly across the blade width. Therefore increasing the blade width will result in a higher volume
