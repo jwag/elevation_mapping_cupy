@@ -1450,7 +1450,7 @@ class GETMovement:
         d = d_prime * np.sin(params['rho'])/np.sin(params['rho']-params['alpha'])
         return d_prime, d
     
-    def update_map_with_swept_volume(self, swept_mesh, normal, translation, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params={}, obtain_FEE_em_params=True, GET_plane_origin=None):
+    def update_map_with_swept_volume(self, swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params={}, obtain_FEE_em_params=True, GET_plane_origin=None):
         """
         Update the elevation map in place with the a swept volume derived from the GET. The coordinate frame is
         assumed to be the map origin frame O to reduce coordinate conversions. This means that the swept_mesh, 
@@ -1459,6 +1459,7 @@ class GETMovement:
             swept_mesh (trimesh.Trimesh):    The swept volume of the GET in the map origin frame
             normal (np.ndarray):             The normal vector of the starting plane of the swept volume
             translation (np.ndarray):        The translation vector of the swept volume in the map frame
+            O_r_OG (np.ndarray) (n_steps,3): The position of the blade (center) in the map origin frame
             n_steps (int):                   The number of time steps taken over the translation
             var_h (float):                   The variance of the height of the swept volume
             elevation_map (xp.ndarray):      The full starting elevation map to update in place
@@ -1468,6 +1469,7 @@ class GETMovement:
             obtain_FEE_em_params (bool):     Whether to obtain the EM derived parameters for the FEE
             GET_plane_origin (np.ndarray):   The origin of the GET plane in the map frame (any point on the surface of the GET)
         """
+        assert n_steps == O_r_OG.shape[0], "The number of time steps must match the number of blade positions"
         # Obtain a map frame aligned bounding box for the swept volume
         bbox = swept_mesh.bounding_box
         # Find cells in the elevation map that are within the bounding box of the swept volume
@@ -1623,8 +1625,8 @@ class GETMovement:
                 elevation_map[:,inds_i, inds_j] = submap
                 # If the map was updated at all that means that we had some sort of intersection with the swept volume
                 # and therefore the depth of cut for this movement can be computed
-                d_trans = np.linspace(0, 1, n_steps)
-                O_r_OG = GET_plane_origin[None,:] + translation[None,:]*d_trans[:,None]
+                # d_trans = np.linspace(0, 1, n_steps)
+                # O_r_OG = GET_plane_origin[None,:] + translation[None,:]*d_trans[:,None]
                 d_prime, d = self.project_blade_depth(FEE_proj_params, O_r_OG)
                 V_Q, Q = self.project_FEE_surcharge(FEE_proj_params, dV_Q, resolution, n_steps)
                 # Make sure we can compute the blade depth (using d_prime as a valid flag for both surcharge and blade depth interp)
@@ -1707,7 +1709,7 @@ class GETMovement:
         
         return move_dir, valid
 
-    def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, n_steps, var_h, roll=None, FEE=True):
+    def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, M_r_MG, n_steps, var_h, roll=None, FEE=True):
         """
         Update the elevation map with the movement of the GET from T_MG0 to T_MG1
         Args:
@@ -1717,6 +1719,7 @@ class GETMovement:
             resolution (float):             The resolution of the map
             T_MG0 (np.ndarray):             The initial pose of the GET in the map frame
             T_MG1 (np.ndarray):             The final pose of the GET in the map frame
+            M_r_MG (np.ndarray)(n_steps x3):The origin of the GET in the map frame over the sweep
             n_steps (int):                  The number of steps to interpolate between T_MG0 and T_MG1
             var_h (float):                  The variance of the height of the swept volume
             roll (float):                   The roll of the GET in degrees
@@ -1744,6 +1747,8 @@ class GETMovement:
         GET_plane_origin = T_OG0[:3, :3]@self.GET_geometry_origin + T_OG0[:3, 3]
         # Also get the translation between the two poses of the GET
         translation = T_MG1[:3, 3] - T_MG0[:3, 3]
+        # Move the swept volume poistion to the map origin frame
+        O_r_OG = M_r_MG - map_center[None, :]
 
 
         # Initialize in case of no intersections
@@ -1752,13 +1757,13 @@ class GETMovement:
         if pos_swept_mesh is not None:
             # Move the swept volume to the map origin frame
             pos_swept_mesh.apply_transform(T_OG0)
-            FEE_em_params, self.pos_swept_mesh_FEE_projection_params = self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params, self.pos_swept_mesh_FEE_projection_params = self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         if neg_swept_mesh is not None:
             # Flip the direction of the normal for the negative swept volume
             normal = -normal
             # Move the swept volume to the map origin frame
             neg_swept_mesh.apply_transform(T_OG0)
-            FEE_em_params, self.neg_swept_mesh_FEE_projection_params = self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params, self.neg_swept_mesh_FEE_projection_params = self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         return FEE_em_params
 
 
