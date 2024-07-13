@@ -898,7 +898,12 @@ class GETMovement:
         
         # Now generate the GET geometry
         # TODO: Add support for multiple planar GET surfaces at different angles
-        self.GET_mesh = self.GET_model(**self.GET_params)
+        # The GET_origin is the origin of the GET geometry in the blade frame (should be zeros for now)
+        self.GET_mesh, self.GET_geometry_origin = self.GET_model(**self.GET_params)
+
+        # Initialize Parameters Used for FEE Projection
+        self.pos_swept_mesh_FEE_projection_params = None
+        self.neg_swept_mesh_FEE_projection_params = None
 
     def simple_blade_geometry(self, blade_width=3.0, blade_height=0.6, **kwargs):
         """
@@ -941,6 +946,9 @@ class GETMovement:
         # Create the trimesh object
         blade = trimesh.Trimesh(vertices=vertices, faces=faces_front)
 
+        # Origin is assumed to be at center of the GET currently
+        blade_origin = np.array([0.0, 0.0, 0.0])
+
         # # Rotate the blade about the Y axis at the origin by blade_angle degrees ccw
         # # The blade is rotated about the Y axis at the origin by blade_angle degrees ccw about the Y axis.
         # # blade_angle_deg=-10, blade_origin=[1.634, 0.0, 0.060+0.265]
@@ -952,7 +960,7 @@ class GETMovement:
         # if apply_transform:
         #     blade.apply_transform(T_CB)
 
-        return blade
+        return blade, blade_origin
     
     def map_index_to_point_xy(self, indices, center, cell_n, resolution):
         """
@@ -1230,7 +1238,7 @@ class GETMovement:
             resolution (float):                  The resolution of the map
 
         Returns:
-            FEE_params (dict):                   The FEE parameters alpha, rho, d, w, Q
+            FEE_params (dict):                   The FEE parameters alpha, rho, d, w, V_Q (prior to soil failure)
         """
         surf_points, valid, V_Q = self.get_surface_points(intersected_inds, translation[0:2], elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution)
         if np.sum(valid) == 0:
@@ -1293,14 +1301,65 @@ class GETMovement:
         w = np.max(points_perp_t) - np.min(points_perp_t)
         # This will always be an underestimate of the true blade width due to the discretization
         # We can compensate for this partially by increasing w so that the errors are more centered around the true value on average
+        # Set the corrected width as the new width
+        w = w + resolution
+
+        # Create dictionary of parameters to return
+        FEE_em_params = {"alpha": alpha_, "rho": rho_, "d": d_, "w": w, "V_Q": V_Q, "d_prime": d_prime}
+        return FEE_em_params
+    
+    def compute_delta_surcharge(self, loose_remaining, compact_swelled_moved, resolution):
+        """
+        The change in surcharge over the sweep is computed using the difference between the compacted soil
+        that has been swelled and moved and the loose soil that remains. 
+
+        Args:
+            loose_remaining (np.ndarray):       The loose soil that remains in the intersected cells
+            compact_swelled_moved (np.ndarray): The compacted soil that has been swelled and moved
+            resolution (float):                 The resolution of the map
+        Returns:
+            dV_Q (float):                       The change in surcharge volume over the sweep
+        """
+        # TODO: Double check that this makes sense
+        dV_Q = (np.sum(compact_swelled_moved) - np.sum(loose_remaining))*resolution**2
+        return dV_Q
+    
+    def project_FEE_surcharge(self, FEE_em_params, dV_Q, resolution, n_steps):
+        """
+        Project/Interpolate the surcharge volume for the FEE.
+        The initial V_Q, prior to the sweep is provided by the FEE_em_params as V_Q.
+        This difference in surcharge volume over the sweep is distributed evenly across the time steps of the
+        sweep to obtain the surcharge volume at each time step. The surcharge volume is then limited by the
+        maximum surcharge volume per unit width to help deal with not modelling erosion/spill accounting for
+        the blade width discretization error correction.
+        
+        Args:
+            FEE_em_params (dict):               The elevation mapping derived FEE parameters
+            dV_Q (float):                       The change in surcharge volume over the sweep
+            resolution (float):                 The resolution of the map
+            n_steps (int):                      The number of time steps in the sweep
+        Returns:
+            V_Q (np.ndarray) (n_steps,):        The surcharge volume at each time step
+            Q (np.ndarray) (n_steps,):          The surcharge force at each time step
+        """
+
+        if FEE_em_params is None or dV_Q == None:
+            return None, None
+        # We can compensate for this partially by increasing w so that the errors are more centered around the true value on average
         dw = resolution
-        w_corr = w + dw
+        # The w in FEE_em_params is the corrected width.
+        w_corr = FEE_em_params['w']
+        # The width that corresponds to V_Q in the FEE_em_params corresponds to the uncorrected width
+        w = w_corr - dw
+
+        # Interpolate the surcharge volume for the FEE
+        V_Q = FEE_em_params['V_Q'] + np.linspace(0, dV_Q, n_steps)
         
         # Limit V_Q by the maximum surcharge volume per unit width to help deal with not modelling erosion/spill
         V_q = V_Q/(w) # fix possible divide by 0
         V_q_lim = self.GET_params['max_surcharge_vol_per_unit_width']
         if V_q_lim >= 0:
-            V_q = min(V_q, V_q_lim)
+            V_q = np.minimum(V_q, V_q_lim)
         # If there are errors in the width, then this will result in errors in tracking the swept volume that accumulate
         # One way of correcting for it is to make the same assumption as we do for width, i.e. that the errors are centered around the true value
         # and that the surchare is distributed evenly across the blade width. Therefore increasing the blade width will result in a higher volume
@@ -1309,19 +1368,89 @@ class GETMovement:
         else:
             V_Q = V_q*w
         
-        # Set the corrected width as the new width
-        w = w_corr
-        
         # Compute Q
         # In math - compacted_soil_moist_unit_weight: gamma (fixed value for elevation mapping),
         #           swell_factor: epsilon
         Q = V_Q * self.GET_params['compacted_soil_moist_unit_weight'] / self.GET_params['swell_factor']
 
-        # Create dictionary of parameters to return
-        FEE_em_params = {"alpha": alpha_, "rho": rho_, "d": d_, "w": w, "Q": Q, "d_prime": d_prime}
-        return FEE_em_params
+        return V_Q, Q
     
-    def update_map_with_swept_volume(self, swept_mesh, normal, translation, var_h, elevation_map, cell_n, resolution, obtain_FEE_em_params=True, GET_plane_origin=None):
+    # TODO: Review that this modificaiton in place works
+    def set_blade_depth_calc_params(self, FEE_em_params, GET_plane_origin, translation):
+        """
+        Assign the variables for the blade depth calculation into the params dictionary.
+        These are used to determine the blade depth given the current position of the blade.
+        Define a new coordinate system D for the blade depth calculation where the origin is at the center of the GET
+        at the halfway point between the two GET positions. This will ensure that the blade depth (d_prime) is returned
+        via a linear interpolation of the blade depth in the D coordinate system with
+        d_prime = x * tan(alpha) - z + d_prime_offset,
+        where x and z are the x and z coordinates in the D coordinate system.
+        The x axis is in the direction of the blade translation,the y axis is perpendicular to the translation, and the z axis is vertical.
+        The blade depth interpolation is done in this coordinate system as an approximation of the blade depth,
+        to enable higher density sampling of the blade depth.
+        Args:
+            FEE_em_params (dict):           The elevation mapping derived FEE parameters
+            GET_plane_origin (np.ndarray):  The origin of the GET plane in the map origin frame (any point on the surface of the GET)
+            translation (np.ndarray):       The translation vector of the swept volume in the map frame
+        Returns:
+            FEE_proj_params (dict):         The FEE projection parameters
+        """
+
+        # Set the rotation matrix as defined by the translation direction
+        # First normalize the translation vector
+        t_dir = translation[0:2] / np.linalg.norm(translation[0:2])
+        c_yaw = t_dir[0]
+        s_yaw = t_dir[1]
+        # The transformation matrix from the map origin frame to the blade depth calculation frame
+        T_OD = np.array([[c_yaw, -s_yaw, 0, 0],
+                        [s_yaw, c_yaw, 0, 0],
+                        [0, 0, 1, 0],
+                        [0, 0, 0, 1]], dtype=self.data_type)
+        # Set the translation as the average of the two GET positions
+        T_OD[0:3,3] = -(GET_plane_origin[0:3] + translation[0:3]/2.0)
+
+        FEE_proj_params = {}
+        FEE_proj_params['T_OD'] = T_OD
+        # Append the FEE EM parameters to the FEE projection parameters
+        FEE_proj_params.update(FEE_em_params)
+        return FEE_proj_params
+
+    def project_blade_depth(self, params, O_r_OG):
+        """
+        Project the blade depth given the current position of the blade.
+        Obtain the blade depth wrt horizontal, d_prime, (useful for control purposes),
+        and d, using the provided depth of cut parameters.
+        Args:
+            params (dict):              The parameters for the FEE projection
+            O_r_OG (np.ndarray) (n,3):  The position of the blade (center) in the map origin frame
+        Returns:
+            d_prime (np.ndarray) (n,):  The blade depth wrt the horizontal plane
+            d (np.ndarray) (n,):        The blade depth wrt the terrain surface (i.e. d in FEE)
+        """
+        # TODO: Update this to handle multiple query points at once
+        if params is None: # Double check this
+            # warnings.warn("Blade depth parameters not set. Please call set_blade_depth_calc_params() before calling get_blade_depth()")
+            return None, None
+        else:
+            n = O_r_OG.shape[0]
+            # Transform the blade position to the blade depth calculation frame
+            O_r_OG = np.concatenate((O_r_OG, np.ones((n,1), dtype=self.data_type)), axis=1)
+            D_r_DG = (params['T_OD']@O_r_OG.T).T
+            # Currently using the distance along all axes to determine if the blade is too far from the GET,
+            # but this could be changed to only use the x and z axes or to also account for changed orientation.
+            dist = np.linalg.norm(D_r_DG[:,0:3], axis=1)
+            # Keep it simple for now by ensuring all points are within the max projection distance
+            if np.any(dist > self.GET_params['em_FEE_max_projection_dist']):
+                # If the distance is too far, don't project the depth
+                return None, None
+        # Return d_prime given the assumed surface and current position
+        d_prime = np.tan(params['alpha']) * D_r_DG[:,0] - D_r_DG[:,2] + params['d_prime']
+        # Compute d from d_prime assuming the same surface angle and blade angle
+        # TODO: modify this to handle varying blade angle (need to rework math as it assumes fixed rho)
+        d = d_prime * np.sin(params['rho'])/np.sin(params['rho']-params['alpha'])
+        return d_prime, d
+    
+    def update_map_with_swept_volume(self, swept_mesh, normal, translation, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params={}, obtain_FEE_em_params=True, GET_plane_origin=None):
         """
         Update the elevation map in place with the a swept volume derived from the GET. The coordinate frame is
         assumed to be the map origin frame O to reduce coordinate conversions. This means that the swept_mesh, 
@@ -1330,10 +1459,12 @@ class GETMovement:
             swept_mesh (trimesh.Trimesh):    The swept volume of the GET in the map origin frame
             normal (np.ndarray):             The normal vector of the starting plane of the swept volume
             translation (np.ndarray):        The translation vector of the swept volume in the map frame
+            n_steps (int):                   The number of time steps taken over the translation
             var_h (float):                   The variance of the height of the swept volume
             elevation_map (xp.ndarray):      The full starting elevation map to update in place
             cell_n (int):                    The number of cells in the map
             resolution (float):              The resolution of the map
+            FEE_proj_params (dict):          The parameters for the FEE projection
             obtain_FEE_em_params (bool):     Whether to obtain the EM derived parameters for the FEE
             GET_plane_origin (np.ndarray):   The origin of the GET plane in the map frame (any point on the surface of the GET)
         """
@@ -1365,7 +1496,8 @@ class GETMovement:
                 # TODO: We could also update the variance of the cells that are not intersected,
                 #       e.g. if the variance is high then we can reduce it if our swept volume is close to the ground
                 update_elevation = False
-        FEE_em_params = None
+        FEE_em_params_proj = None
+        dV_Q = None
         # Debugging Override
         # update_elevation = True
         if update_elevation:
@@ -1398,6 +1530,8 @@ class GETMovement:
                     assert GET_plane_origin is not None, "GET_plane_origin must be provided to obtain FEE geometry parameters"
                     intersected_inds = cell_inds[intersected_lines]
                     FEE_em_params = self.obtain_FEE_em_params(intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution)
+                if FEE_em_params is not None:
+                    FEE_proj_params = self.set_blade_depth_calc_params(FEE_em_params, GET_plane_origin, translation)
                 # Find the direction of material movement
                 move_dir, valid_movement = self.material_movement_direction(normal, translation, normal_weight=self.GET_params['move_dir_normal_weight'])
                 if not valid_movement:
@@ -1445,6 +1579,10 @@ class GETMovement:
                         compact_moved = compact_moved[unique_inds]
                         loose_moved = loose_moved[unique_inds]
                     
+                    # Compute the change in surcharge over the sweep prior to dealing with errors
+                    # in the deposited locations
+                    compact_swelled_moved = compact_moved*self.GET_params['swell_factor']
+                    dV_Q = self.compute_delta_surcharge(loose_remaining, compact_swelled_moved, resolution)
                     valid_deposit_inds = submap[2, deposit_inds[:,0], deposit_inds[:,1]] > 0.5
                     # Handle case where the material is deposited outside the valid portion of the map
                     # a deposition locaiton may need to be a a cell that is within the map,
@@ -1457,7 +1595,7 @@ class GETMovement:
                     # Deposit the material in the new location for elevation and loose material
                     delta_h_swelled = compact_moved*self.GET_params['swell_factor'] + loose_moved
                     # If swell factor is 1 then should be equal to pierce_dist
-                    submap[0, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled # Got a bug here when I backed up and re ran over terrain. TODO fix it
+                    submap[0, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled
                     submap[7, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled
                     # Update the variance of the cells where material was deposited
                     # TODO: Review this method and compare to d'Adamo pg. 114 
@@ -1483,7 +1621,33 @@ class GETMovement:
             if map_update:
                 # Copy the updated submap back to the elevation map
                 elevation_map[:,inds_i, inds_j] = submap
-        return FEE_em_params
+                # If the map was updated at all that means that we had some sort of intersection with the swept volume
+                # and therefore the depth of cut for this movement can be computed
+                d_trans = np.linspace(0, 1, n_steps)
+                O_r_OG = GET_plane_origin[None,:] + translation[None,:]*d_trans[:,None]
+                d_prime, d = self.project_blade_depth(FEE_proj_params, O_r_OG)
+                V_Q, Q = self.project_FEE_surcharge(FEE_proj_params, dV_Q, resolution, n_steps)
+                # Make sure we can compute the blade depth (using d_prime as a valid flag for both surcharge and blade depth interp)
+                if d_prime is not None:
+                    FEE_em_params_proj = FEE_proj_params.copy()
+                    for key, val in FEE_em_params_proj.items():
+                        if key == 'T_OD':
+                            continue
+                        # expand the array to the number of steps for fixed values
+                        FEE_em_params_proj[key] = np.broadcast_to(val, n_steps)
+                    # Could pull out T_OD if it isn't necessary
+                    # Overwrite with the projected values
+                    FEE_em_params_proj['d_prime'] = d_prime
+                    FEE_em_params_proj['d'] = d
+                    FEE_em_params_proj['V_Q'] = V_Q
+                    FEE_em_params_proj['Q'] = Q
+                    FEE_em_params_proj['d_step'] = np.arange(n_steps)
+                    # TODO: Add support for interpolating surcharge here.
+                    if np.any(FEE_em_params_proj['d'] == None):
+                        debug = 1
+                else:
+                    debug = 1
+        return FEE_em_params_proj, FEE_proj_params
 
     def material_movement_direction(self, normal, translation, normal_weight=0.5):
         """
@@ -1543,7 +1707,7 @@ class GETMovement:
         
         return move_dir, valid
 
-    def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, var_h, roll=None, FEE=True):
+    def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, n_steps, var_h, roll=None, FEE=True):
         """
         Update the elevation map with the movement of the GET from T_MG0 to T_MG1
         Args:
@@ -1553,6 +1717,7 @@ class GETMovement:
             resolution (float):             The resolution of the map
             T_MG0 (np.ndarray):             The initial pose of the GET in the map frame
             T_MG1 (np.ndarray):             The final pose of the GET in the map frame
+            n_steps (int):                  The number of steps to interpolate between T_MG0 and T_MG1
             var_h (float):                  The variance of the height of the swept volume
             roll (float):                   The roll of the GET in degrees
             FEE (bool):                     Whether to obtain the geometry parameters for the FEE
@@ -1575,22 +1740,25 @@ class GETMovement:
         # Obtain the normal of the original surface of the GET and put in map origin frame
         normal = T_OG0[:3, :3]@self.GET_mesh.face_normals[0]
         # Obtain a point on the plane of the GET in the map origin frame, used for obtaining FEE geometry parameters
-        GET_plane_origin = T_OG0[:3, :3]@self.GET_mesh.vertices[0] + T_OG0[:3, 3]
+        # Using the center point of the geometry for now
+        GET_plane_origin = T_OG0[:3, :3]@self.GET_geometry_origin + T_OG0[:3, 3]
         # Also get the translation between the two poses of the GET
         translation = T_MG1[:3, 3] - T_MG0[:3, 3]
 
+
         # Initialize in case of no intersections
+        # TODO: Figure out how to handle the negative swept volume and the direction of the forces
         FEE_em_params = None
         if pos_swept_mesh is not None:
             # Move the swept volume to the map origin frame
             pos_swept_mesh.apply_transform(T_OG0)
-            FEE_em_params = self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, var_h, elevation_map, cell_n, resolution, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params, self.pos_swept_mesh_FEE_projection_params = self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         if neg_swept_mesh is not None:
             # Flip the direction of the normal for the negative swept volume
             normal = -normal
             # Move the swept volume to the map origin frame
             neg_swept_mesh.apply_transform(T_OG0)
-            FEE_em_params = self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, var_h, elevation_map, cell_n, resolution, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params, self.neg_swept_mesh_FEE_projection_params = self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         return FEE_em_params
 
 

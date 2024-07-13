@@ -67,3 +67,4 @@ subscribers:
       l_surcharge_max: 1.0 # The maximum distance from the blade to include loose soil in the surcharge calculation
       depth_weight_avg_coeff: 0.0 # Set to 0 for regular average
       max_surcharge_vol_per_unit_width: 0.3 # 0.1-0.3 seems optimal? Units of m^2. Set to -1 to disable limit. Can think about as size of pile in front of blade, e.g. blade_height*surcharge_dist_x for rectangular
+      em_FEE_max_projection_dist: 0.5 # Maximum distance to extrapolate FEE params generation from last valid em data

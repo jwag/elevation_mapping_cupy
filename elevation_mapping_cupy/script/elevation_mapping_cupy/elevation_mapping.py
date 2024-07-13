@@ -486,6 +486,7 @@ class ElevationMap:
                            GET_ID: str,
                            T_MG0: cp._core.core.ndarray,
                            T_MG1: cp._core.core.ndarray,
+                           n_steps: np.int32,
                            var_h: float,
                            roll: float
     ):
@@ -495,6 +496,7 @@ class ElevationMap:
             GET_ID (str):                               GET ID
             T_MG0 (cupy._core.core.ndarray):            Transformation matrix from the GET frame to the map frame at time t0
             T_MG1 (cupy._core.core.ndarray):            Transformation matrix from the GET frame to the map frame at time t1
+            n_steps (np.int32):                         Number of time steps between T_MG0 and T_MG1 (inclusive) used for interpolation
             var_h (float):                              Variance of the height measurement
             roll (float):                               Roll angle of the GET frame w.r.t. the map frame
         Returns:
@@ -515,6 +517,7 @@ class ElevationMap:
                 self.resolution,
                 T_MG0,
                 T_MG1,
+                n_steps,
                 var_h,
                 roll,
             )
