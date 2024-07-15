@@ -1219,11 +1219,7 @@ class GETMovement:
         and the use of cell_center intersection witht he swept volume, the blade width will always be underestimated.
         To help ensure the blade with estimation error has a mean closer to 0, the cell resolution is added to w.
         The volume of the surcharge, V_Q, is obtained by summing the the loose soil "in front" of the blade
-        up to a threshold distance from the blade surface, l_surcharge_max. Since the blade width is underestimated,
-        and the volume of material moved from each GET movement is also underestimated, the volume of the surcharge
-        is also likely underestimated. This is difficult to compensate for, but we can try to account for this by
-        increasing V_Q assuming a linear realtionship between the blade width and the volume of material moved.
-        This compensation is enabled by setting correct_Q_width to true. The surcharge force, Q, is then obtained
+        up to a threshold distance from the blade surface, l_surcharge_max. The surcharge force, Q, is then obtained
         by multiplying V_Q by the compacted_soil_moist_unit_weight taking into account the assumed swell factor.
         The parameters are then returned as a dictionary.
 
@@ -1324,19 +1320,17 @@ class GETMovement:
         dV_Q = (np.sum(compact_swelled_moved) - np.sum(loose_remaining))*resolution**2
         return dV_Q
     
-    def project_FEE_surcharge(self, FEE_em_params, dV_Q, resolution, n_steps):
+    def project_FEE_surcharge(self, FEE_em_params, dV_Q, n_steps):
         """
         Project/Interpolate the surcharge volume for the FEE.
         The initial V_Q, prior to the sweep is provided by the FEE_em_params as V_Q.
         This difference in surcharge volume over the sweep is distributed evenly across the time steps of the
         sweep to obtain the surcharge volume at each time step. The surcharge volume is then limited by the
-        maximum surcharge volume per unit width to help deal with not modelling erosion/spill accounting for
-        the blade width discretization error correction.
+        maximum surcharge volume per unit width to help deal with not modelling erosion/spill.
         
         Args:
             FEE_em_params (dict):               The elevation mapping derived FEE parameters
             dV_Q (float):                       The change in surcharge volume over the sweep
-            resolution (float):                 The resolution of the map
             n_steps (int):                      The number of time steps in the sweep
         Returns:
             V_Q (np.ndarray) (n_steps,):        The surcharge volume at each time step
@@ -1345,29 +1339,19 @@ class GETMovement:
 
         if FEE_em_params is None or dV_Q == None:
             return None, None
-        # We can compensate for this partially by increasing w so that the errors are more centered around the true value on average
-        dw = resolution
-        # The w in FEE_em_params is the corrected width.
-        w_corr = FEE_em_params['w']
         # The width that corresponds to V_Q in the FEE_em_params corresponds to the uncorrected width
-        w = w_corr - dw
+        w = FEE_em_params['w']
 
         # Interpolate the surcharge volume for the FEE
         V_Q = FEE_em_params['V_Q'] + np.linspace(0, dV_Q, n_steps)
         
         # Limit V_Q by the maximum surcharge volume per unit width to help deal with not modelling erosion/spill
-        V_q = V_Q/(w) # fix possible divide by 0
+        V_q = V_Q/(w)
         V_q_lim = self.GET_params['max_surcharge_vol_per_unit_width']
         if V_q_lim >= 0:
             V_q = np.minimum(V_q, V_q_lim)
         V_q = np.maximum(V_q, 0.0) # Ensure that the surcharge volume is non-negative
-        # If there are errors in the width, then this will result in errors in tracking the swept volume that accumulate
-        # One way of correcting for it is to make the same assumption as we do for width, i.e. that the errors are centered around the true value
-        # and that the surchare is distributed evenly across the blade width. Therefore increasing the blade width will result in a higher volume
-        if self.GET_params['correct_Q_width']:
-            V_Q = V_q*(w_corr)
-        else:
-            V_Q = V_q*w
+        V_Q = V_q*w
         
         # Compute Q
         # In math - compacted_soil_moist_unit_weight: gamma (fixed value for elevation mapping),
@@ -1500,7 +1484,7 @@ class GETMovement:
                 #       e.g. if the variance is high then we can reduce it if our swept volume is close to the ground
                 update_elevation = False
         FEE_em_params_proj = None
-        dV_Q = None
+        dV_Q = 0.0
         # Debugging Override
         # update_elevation = True
         if update_elevation:
@@ -1553,6 +1537,7 @@ class GETMovement:
                     submap[7, intersected_cells[:,0], intersected_cells[:,1]] = loose_remaining
                     # ["elevation": 0, "variance": 1, "is_valid": 2, "traversability": 3, "time": 4, "upper_bound": 5, "is_upper_bound": 6, "elevation_loose": 7]` 
                     # Update the variance of the cells. Using simple variance update for now
+                    start_var = submap[1, intersected_cells[:,0], intersected_cells[:,1]].copy()
                     submap[1, intersected_cells[:,0], intersected_cells[:,1]] += var_h
                     # Update the upper bound of the overlapping cells (set to the updated elevation)
                     submap[5, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
@@ -1576,11 +1561,13 @@ class GETMovement:
                             # dup_inds[0] should be the first index of the duplicates and in the unique_inds
                             compact_moved[dup_inds[0]] += compact_moved[dup_inds[1:]].sum()
                             loose_moved[dup_inds[0]] += loose_moved[dup_inds[1:]].sum()
+                            start_var[dup_inds[0]] += start_var[dup_inds[1:]].sum()
                         # Now update deposit_inds
                         deposit_inds = unique_deposit_inds
                         # And remove the non-unique elements from the moved arrays
                         compact_moved = compact_moved[unique_inds]
                         loose_moved = loose_moved[unique_inds]
+                        start_var = start_var[unique_inds]
                     
                     # Compute the change in surcharge over the sweep prior to dealing with errors
                     # in the deposited locations
@@ -1595,6 +1582,7 @@ class GETMovement:
                         # pierce_dist = pierce_dist[valid_deposit_inds]
                         compact_moved = compact_moved[valid_deposit_inds]
                         loose_moved = loose_moved[valid_deposit_inds]
+                        start_var = start_var[valid_deposit_inds]
                     # Deposit the material in the new location for elevation and loose material
                     delta_h_swelled = compact_moved*self.GET_params['swell_factor'] + loose_moved
                     # If swell factor is 1 then should be equal to pierce_dist
@@ -1603,7 +1591,8 @@ class GETMovement:
                     # Update the variance of the cells where material was deposited
                     # TODO: Review this method and compare to d'Adamo pg. 114 
                     # Should the pierce_dist factor in here?
-                    submap[1, deposit_inds[:,0], deposit_inds[:,1]] += var_h * self.GET_params['swell_factor']**2 
+                    # submap[1, deposit_inds[:,0], deposit_inds[:,1]] += var_h * self.GET_params['swell_factor']**2 
+                    submap[1, deposit_inds[:,0], deposit_inds[:,1]] += var_h + delta_h_swelled**2 + start_var
                     # Update the upper bound
                     submap[5, deposit_inds[:,0], deposit_inds[:,1]] = submap[0, deposit_inds[:,0], deposit_inds[:,1]]
                     # Update the is_upper_bound status of the cells
@@ -1629,7 +1618,7 @@ class GETMovement:
                 # d_trans = np.linspace(0, 1, n_steps)
                 # O_r_OG = GET_plane_origin[None,:] + translation[None,:]*d_trans[:,None]
                 d_prime, d = self.project_blade_depth(FEE_proj_params, O_r_OG)
-                V_Q, Q = self.project_FEE_surcharge(FEE_proj_params, dV_Q, resolution, n_steps)
+                V_Q, Q = self.project_FEE_surcharge(FEE_proj_params, dV_Q, n_steps)
                 # Make sure we can compute the blade depth (using d_prime as a valid flag for both surcharge and blade depth interp)
                 if d_prime is not None:
                     FEE_em_params_proj = FEE_proj_params.copy()
@@ -1645,11 +1634,6 @@ class GETMovement:
                     FEE_em_params_proj['V_Q'] = V_Q
                     FEE_em_params_proj['Q'] = Q
                     FEE_em_params_proj['d_step'] = np.arange(n_steps)
-                    # TODO: Add support for interpolating surcharge here.
-                    if np.any(FEE_em_params_proj['d'] == None):
-                        debug = 1
-                else:
-                    debug = 1
         return FEE_em_params_proj, FEE_proj_params
 
     def material_movement_direction(self, normal, translation, normal_weight=0.5):

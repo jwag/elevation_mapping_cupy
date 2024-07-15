@@ -61,7 +61,6 @@ subscribers:
       move_dir_normal_weight: 0.5
       swell_factor: 1.0 # TODO: Make parameter (use something reasonable). Set to 1 for no swell
       compacted_soil_moist_unit_weight: 14635.91630769231 # Currently set to 50% relative density of loam in Vortex
-      correct_Q_width: True # Adjust Q to compensate for discretization
       l_fit_max: 1.5 # The maximum distance from the blade to find surface points for finding surface plane
       surf_interp_coeff: 3.0 # Parameter of exponential function weighting distance from blade for surface fit
       l_surcharge_max: 1.0 # The maximum distance from the blade to include loose soil in the surcharge calculation
