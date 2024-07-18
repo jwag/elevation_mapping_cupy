@@ -525,6 +525,28 @@ class ElevationMap:
                 roll,
             )
         return FEE_em_params
+    
+    def get_GET_depth(self,
+                      GET_ID: str,
+                      M_r_MG: np.ndarray,
+                      vel_xy: np.ndarray,
+    ):
+        """
+        Obtain blade depth given the current position of the blade using last best FEE parameter fit.
+        This may be useful for control purposes.
+        This function determines the swept mesh projection parameters to use based on the velocity direction.
+        The default is to use the positive (swept volume along the blade normal), but if the velocity is in the opposite
+        direction then the negative swept volume parameters are used.
+        Args:
+            GET_ID (str):                   GET ID
+            M_r_MG (np.ndarray)(3,):        The origin of the GET in the map frame over the sweep
+            vel_xy (np.ndarray)(2,):        The velocity of the blade in the xy plane in the map frame
+        Returns:
+            d_prime (np.ndarray)(1,):       The blade depth wrt the horizontal plane
+            d (np.ndarray)(1,):             The blade depth wrt the terrain surface
+        """
+        d_prime, d = self.GETs[GET_ID].get_blade_depth(M_r_MG, vel_xy, xp.asnumpy(self.center.flatten()))
+        return d_prime, d
 
     def input_pointcloud(
         self,

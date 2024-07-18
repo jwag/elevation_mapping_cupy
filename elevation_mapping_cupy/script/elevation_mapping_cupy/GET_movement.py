@@ -1263,7 +1263,7 @@ class GETMovement:
         # Project the GET surface normal vector onto the slicing plane
         n_t = normal - np.dot(normal, sl_n) / np.dot(sl_n, sl_n) * sl_n
         # Obtain the blade inclination wrt the horizontal plane
-        rho_prime = np.arctan(n_t[0]/n_t[2])
+        rho_prime = np.abs(np.arctan2(n_t[0],n_t[2]))
         # rho_i = alpha_i + rho_prime
         rho_hat = alpha_hat + rho_prime
 
@@ -1300,8 +1300,11 @@ class GETMovement:
         # Set the corrected width as the new width
         w = w + resolution
 
+        # Compute the direction of of translation in the xy plane for use by depth controller
+        t_dir = translation[0:2] / np.linalg.norm(translation[0:2])
+
         # Create dictionary of parameters to return
-        FEE_em_params = {"alpha": alpha_, "rho": rho_, "d": d_, "w": w, "V_Q": V_Q, "d_prime": d_prime}
+        FEE_em_params = {"alpha": alpha_, "rho": rho_, "d": d_, "w": w, "V_Q": V_Q, "d_prime": d_prime, "t_dir": t_dir}
         return FEE_em_params
     
     def compute_delta_surcharge(self, loose_remaining, compact_swelled_moved, resolution):
@@ -1387,12 +1390,14 @@ class GETMovement:
         c_yaw = t_dir[0]
         s_yaw = t_dir[1]
         # The transformation matrix from the map origin frame to the blade depth calculation frame
-        T_OD = np.array([[c_yaw, -s_yaw, 0, 0],
-                        [s_yaw, c_yaw, 0, 0],
-                        [0, 0, 1, 0],
-                        [0, 0, 0, 1]], dtype=self.data_type)
+        R_OD = np.array([[c_yaw, -s_yaw, 0],
+                        [s_yaw, c_yaw, 0],
+                        [0, 0, 1]], dtype=self.data_type)
         # Set the translation as the average of the two GET positions
-        T_OD[0:3,3] = -(GET_plane_origin[0:3] + translation[0:3]/2.0)
+        trans = -(GET_plane_origin[0:3] + translation[0:3]/2.0)
+        T_OD = np.eye(4, dtype=self.data_type)
+        T_OD[0:3,0:3] = R_OD
+        T_OD[0:3,3] = R_OD@trans
 
         FEE_proj_params = {}
         FEE_proj_params['T_OD'] = T_OD
@@ -1433,6 +1438,44 @@ class GETMovement:
         # Compute d from d_prime assuming the same surface angle and blade angle
         # TODO: modify this to handle varying blade angle (need to rework math as it assumes fixed rho)
         d = d_prime * np.sin(params['rho'])/np.sin(params['rho']-params['alpha'])
+        return d_prime, d
+    
+    def get_blade_depth(self ,M_r_MG, vel_xy, map_center):
+        '''
+        Obtain blade depth given the current position of the blade. This may be useful for control purposes.
+        This function determines the swept mesh projection parameters to use based on the velocity direction.
+        The default is to use the positive (swept volume along the blade normal), but if the velocity is in the opposite
+        direction then the negative swept volume parameters are used. If the velocity is not in either direction then
+        the blade depth is not projected.
+        Args:
+            M_r_MG (np.ndarray)(3,):        The origin of the GET in the map frame over the sweep
+            vel_xy (np.ndarray)(2,):        The velocity of the blade in the xy plane in the map frame
+            map_center (np.ndarray)(3,):   The center of the map in the map frame
+        Returns:
+            d_prime (np.ndarray)(1,):       The blade depth wrt the horizontal plane
+            d (np.ndarray)(1,):             The blade depth wrt the terrain surface
+        '''
+        # Select the appropriate FEE_proj_params based on the t_dir
+        FEE_proj_params = None
+        # Default to using positive direction FEE projection parameters, if available
+        if self.pos_swept_mesh_FEE_projection_params is not None:
+            pos_vel_dot = np.dot(vel_xy, self.pos_swept_mesh_FEE_projection_params['t_dir'])
+            if pos_vel_dot > 0:
+                # Use the positive direction FEE projection parameters
+                FEE_proj_params = self.pos_swept_mesh_FEE_projection_params
+        # Only use the negative direction FEE projection parameters if the positive direction is not valid
+        if self.neg_swept_mesh_FEE_projection_params is not None and FEE_proj_params is None:
+            neg_vel_dot = np.dot(vel_xy, self.neg_swept_mesh_FEE_projection_params['t_dir'])
+            if neg_vel_dot > 0:
+                # Use the negative direction FEE projection parameters
+                FEE_proj_params = self.neg_swept_mesh_FEE_projection_params
+       
+        # Move the swept volume poistion to the map origin frame
+        O_r_OG = M_r_MG - map_center
+        # Make (n,3) for compatibility with project_blade_depth
+        O_r_OG = O_r_OG[None]
+        d_prime, d = self.project_blade_depth(FEE_proj_params, O_r_OG)
+
         return d_prime, d
     
     def update_map_with_swept_volume(self, swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params={}, obtain_FEE_em_params=True, GET_plane_origin=None):
@@ -1625,8 +1668,11 @@ class GETMovement:
                     for key, val in FEE_em_params_proj.items():
                         if key == 'T_OD':
                             continue
-                        # expand the array to the number of steps for fixed values
-                        FEE_em_params_proj[key] = np.broadcast_to(val, n_steps)
+                        if key == 't_dir':
+                            FEE_em_params_proj[key]  = np.broadcast_to(val[None,:], (n_steps,val.shape[0]))
+                        else:
+                            # expand the array to the number of steps for fixed values
+                            FEE_em_params_proj[key] = np.broadcast_to(val, n_steps)
                     # Could pull out T_OD if it isn't necessary
                     # Overwrite with the projected values
                     FEE_em_params_proj['d_prime'] = d_prime
@@ -1738,6 +1784,7 @@ class GETMovement:
 
         # Initialize in case of no intersections
         # TODO: Figure out how to handle the negative swept volume and the direction of the forces
+        FEE_em_params = None
         FEE_em_params_pos = None
         FEE_em_params_neg = None
         if pos_swept_mesh is not None:
@@ -1753,12 +1800,15 @@ class GETMovement:
         if FEE_em_params_pos is not None and FEE_em_params_neg is not None:
             # Could support this elsewhere by returning both and then combining them after computing the FEE force
             raise NotImplementedError("Combining the FEE parameters for the positive and negative swept volumes is not yet implemented")
+        elif FEE_em_params_pos is not None:
+            FEE_em_params = FEE_em_params_pos
         elif FEE_em_params_neg is not None:
             # Need to support this by including the translation direction of the portion of the swept volume
-            warnings.warn("Negative swept volume FEE parameters are not yet supported")
+            warnings.warn("Negative swept volume FEE parameters are only partially tested")
+            FEE_em_params = FEE_em_params_neg
         
         # Only return positive FEE parameters for now
-        return FEE_em_params_pos
+        return FEE_em_params
 
 
 if __name__ == "__main__":
