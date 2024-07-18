@@ -904,6 +904,7 @@ class GETMovement:
         # Initialize Parameters Used for FEE Projection
         self.pos_swept_mesh_FEE_projection_params = None
         self.neg_swept_mesh_FEE_projection_params = None
+        self.ground_proj_params = None
 
     def simple_blade_geometry(self, blade_width=3.0, blade_height=0.6, **kwargs):
         """
@@ -1363,26 +1364,7 @@ class GETMovement:
 
         return V_Q, Q
     
-    # TODO: Review that this modificaiton in place works
-    def set_blade_depth_calc_params(self, FEE_em_params, GET_plane_origin, translation):
-        """
-        Assign the variables for the blade depth calculation into the params dictionary.
-        These are used to determine the blade depth given the current position of the blade.
-        Define a new coordinate system D for the blade depth calculation where the origin is at the center of the GET
-        at the halfway point between the two GET positions. This will ensure that the blade depth (d_prime) is returned
-        via a linear interpolation of the blade depth in the D coordinate system with
-        d_prime = x * tan(alpha) - z + d_prime_offset,
-        where x and z are the x and z coordinates in the D coordinate system.
-        The x axis is in the direction of the blade translation,the y axis is perpendicular to the translation, and the z axis is vertical.
-        The blade depth interpolation is done in this coordinate system as an approximation of the blade depth,
-        to enable higher density sampling of the blade depth.
-        Args:
-            FEE_em_params (dict):           The elevation mapping derived FEE parameters
-            GET_plane_origin (np.ndarray):  The origin of the GET plane in the map origin frame (any point on the surface of the GET)
-            translation (np.ndarray):       The translation vector of the swept volume in the map frame
-        Returns:
-            FEE_proj_params (dict):         The FEE projection parameters
-        """
+    def compute_T_OD(self, GET_plane_origin, translation):
 
         # Set the rotation matrix as defined by the translation direction
         # First normalize the translation vector
@@ -1399,11 +1381,51 @@ class GETMovement:
         T_OD[0:3,0:3] = R_OD
         T_OD[0:3,3] = R_OD@trans
 
-        FEE_proj_params = {}
-        FEE_proj_params['T_OD'] = T_OD
+        return T_OD
+    
+    # TODO: Review that this modificaiton in place works
+    def set_blade_depth_calc_params(self, FEE_em_params, GET_plane_origin, translation):
+        """
+        Assign the variables for the blade depth calculation into the params dictionary.
+        These are used to determine the blade depth given the current position of the blade.
+        Define a new coordinate system D for the blade depth calculation where the origin is at the center of the GET
+        at the halfway point between the two GET positions. This will ensure that the blade depth (d_prime) is returned
+        via a linear interpolation of the blade depth in the D coordinate system with
+        d_prime = x * tan(alpha) - z + d_prime_offset,
+        where x and z are the x and z coordinates in the D coordinate system.
+        The x axis is in the direction of the blade translation,the y axis is perpendicular to the translation, and the z axis is vertical.
+        The blade depth interpolation is done in this coordinate system as an approximation of the blade depth,
+        to enable higher density sampling of the blade depth.
+        Args:
+            FEE_em_params (dict):           The elevation mapping derived FEE parameters
+            GET_plane_origin (np.ndarray):  The origin of the GET plane in the map origin frame
+            translation (np.ndarray):       The translation vector from the start to the end of the sweep in the map frame
+        Returns:
+            FEE_proj_params (dict):         The FEE projection parameters
+        """
+
+        T_OD = self.compute_T_OD(GET_plane_origin, translation)
+        FEE_proj_params = {'T_OD': T_OD}
         # Append the FEE EM parameters to the FEE projection parameters
         FEE_proj_params.update(FEE_em_params)
         return FEE_proj_params
+    
+    def set_blade_ground_dist_calc_params(self, dist_to_ground, GET_plane_origin, translation):
+        """
+        Record the distance from the swept volume to the map with the blade position along the sweep
+        to be used for the blade ground distance calculation. This calculation can provide a depth
+        of cut wrt to the hoizontal.
+        Args:
+            dist_to_ground (float):         The distance from the swept volume to the map along the blade sweep
+            GET_plane_origin (np.ndarray):  The origin of the GET plane in the map origin frame
+            translation (np.ndarray):       The translation vector from the start to the end of the sweep in the map frame
+        Returns:
+            ground_proj_params (dict):         The ground projection parameters
+        """
+        T_OD = self.compute_T_OD(GET_plane_origin, translation)
+        ground_proj_params = {'T_OD': T_OD, 'dist_to_ground': dist_to_ground}
+        return ground_proj_params
+        
 
     def project_blade_depth(self, params, O_r_OG):
         """
@@ -1417,9 +1439,9 @@ class GETMovement:
             d_prime (np.ndarray) (n,):  The blade depth wrt the horizontal plane
             d (np.ndarray) (n,):        The blade depth wrt the terrain surface (i.e. d in FEE)
         """
-        # TODO: Update this to handle multiple query points at once
         if params is None: # Double check this
             # warnings.warn("Blade depth parameters not set. Please call set_blade_depth_calc_params() before calling get_blade_depth()")
+            valid = False
             return None, None
         else:
             n = O_r_OG.shape[0]
@@ -1439,6 +1461,25 @@ class GETMovement:
         # TODO: modify this to handle varying blade angle (need to rework math as it assumes fixed rho)
         d = d_prime * np.sin(params['rho'])/np.sin(params['rho']-params['alpha'])
         return d_prime, d
+    
+    def project_ground_depth(self, O_r_OG):
+        """
+        Project the blade depth given the current position of the blade.
+        Obtain the blade depth wrt the terrain surface, d, using the provided depth of cut parameters.
+        Args:
+            O_r_OG (np.ndarray) (n,3):  The position of the blade (center) in the map origin frame
+        Returns:
+            d_prime (np.ndarray) (n,):  The blade depth wrt the horizontal plane
+        """
+        params = self.ground_proj_params
+        if params is None:
+            return None
+        n = O_r_OG.shape[0]
+        # Transform the blade position to the blade depth calculation frame
+        O_r_OG = np.concatenate((O_r_OG, np.ones((n,1), dtype=self.data_type)), axis=1)
+        D_r_DG = (params['T_OD']@O_r_OG.T).T
+        d_prime = D_r_DG[:,2] + params['dist_to_ground']
+        return d_prime
     
     def get_blade_depth(self ,M_r_MG, vel_xy, map_center):
         '''
@@ -1474,7 +1515,13 @@ class GETMovement:
         O_r_OG = M_r_MG - map_center
         # Make (n,3) for compatibility with project_blade_depth
         O_r_OG = O_r_OG[None]
-        d_prime, d = self.project_blade_depth(FEE_proj_params, O_r_OG)
+        d_prime = None
+        if FEE_proj_params is not None:
+            d_prime, d = self.project_blade_depth(FEE_proj_params, O_r_OG)
+        if d_prime is None:
+            # If we are unable to project the blade_depth with the FEE params then use the ground projection params
+            d_prime = self.project_ground_depth(O_r_OG)
+            d = d_prime
 
         return d_prime, d
     
@@ -1521,7 +1568,9 @@ class GETMovement:
             # Check to see if we are likely to have an intersection by comparing the max_z of the submap and the min_z of the swept volume bounding box
             min_em_z = self.xp.min(submap[0, valid_cells])
             max_em_z = self.xp.max(submap[0, valid_cells])
-            if min_sv_z > max_em_z:
+            dist_to_ground = min_sv_z - max_em_z
+            self.ground_proj_params = self.set_blade_ground_dist_calc_params(dist_to_ground.get(), GET_plane_origin, translation)
+            if dist_to_ground > 0:
                 print("No intersection with swept volume")
                 # TODO: We could also update the variance of the cells that are not intersected,
                 #       e.g. if the variance is high then we can reduce it if our swept volume is close to the ground
