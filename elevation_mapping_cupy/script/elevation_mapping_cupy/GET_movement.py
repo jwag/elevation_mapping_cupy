@@ -1255,6 +1255,7 @@ class GETMovement:
         # Note: Beta here is the intercept and slope of the line of best fit, not the soil failure angle
         beta_hat = np.array([np.linalg.inv(Xi.T @ np.diag(Wi) @ Xi) @ (Xi.T @ np.diag(Wi) @ surf_point[:,1]) for Xi, Wi, surf_point in zip(X, W, surf_points)], dtype=self.data_type)
         alpha_hat = np.arctan(beta_hat[:,1])
+        # TODO: Consider computing the residuals to check the quality of the fit and then computing the covariance matrix
 
         # Obtain rho_prime
         # Obtain the (unscaled) normal vector of the slicing plane
@@ -1284,6 +1285,19 @@ class GETMovement:
         rho_ = alpha_ + rho_prime
         # Obtain the depth of cut wrt the horizontal plane that intersects the blade at at the blade-surface intersection point
         d_prime = d_ *  np.sin(rho_ - alpha_) /np.sin(rho_)
+        # TODO: Figure out some way to check the quality of the fit and the validity of the parameters combining the individual
+        # line fit accuracy with the avearaging of the slices. This information could be valuable to a network that is learning
+        # to augment these parameters and could help with error propagation.
+        N = d_hat_np.shape[0]
+        if N > 1:
+            var_d = np.sum((d_hat_np - d_)**2)/(N-1)
+            # TODO: Think about how to include the variance of alpha_hat[i] in the variance of alpha_
+            # This way we could account for uneven terrain along the direction of travel
+            var_alpha = np.sum((alpha_hat - alpha_)**2)/(N-1)
+        else:
+            var_d = np.nan
+            var_alpha = np.nan
+        # print("d_Std: {}, alpha_std: {}".format(np.sqrt(var_d), np.sqrt(var_alpha)))
 
         # Find w by finding the extent of the cells centers along the perp t direction by projecting the cell centers onto the 
         # perp t direction and finding the min and max values.
@@ -1300,12 +1314,16 @@ class GETMovement:
         # We can compensate for this partially by increasing w so that the errors are more centered around the true value on average
         # Set the corrected width as the new width
         w = w + resolution
+        # Approximate uncertainty in w using a uniform distribution
+        # TODO: THis assumes movement along the axes of the map, which may not be the case. Should ideally
+        #  consider higher uncertainties in that case.
+        var_w = 1/12*(2*resolution)**2
 
         # Compute the direction of of translation in the xy plane for use by depth controller
         t_dir = translation[0:2] / np.linalg.norm(translation[0:2])
 
         # Create dictionary of parameters to return
-        FEE_em_params = {"alpha": alpha_, "rho": rho_, "d": d_, "w": w, "V_Q": V_Q, "d_prime": d_prime, "t_dir": t_dir}
+        FEE_em_params = {"alpha": alpha_, "rho": rho_, "d": d_, "w": w, "V_Q": V_Q, "d_prime": d_prime, "t_dir": t_dir, "var_d": var_d, "var_alpha": var_alpha, "var_w": var_w}
         return FEE_em_params
     
     def compute_delta_surcharge(self, loose_remaining, compact_swelled_moved, resolution):
@@ -1405,7 +1423,11 @@ class GETMovement:
         """
 
         T_OD = self.compute_T_OD(GET_plane_origin, translation)
-        FEE_proj_params = {'T_OD': T_OD}
+        # Obtain the starting x location of the blade in the D coordinate system at the beginning of the sweep
+        G0_O = np.array([0.0, 0.0, 0.0, 1.0], dtype=self.data_type)
+        G0_O[0:3] = GET_plane_origin[0:3]
+        G0_D = (T_OD@G0_O)[0:3]
+        FEE_proj_params = {'T_OD': T_OD, 'G0_D': G0_D}
         # Append the FEE EM parameters to the FEE projection parameters
         FEE_proj_params.update(FEE_em_params)
         return FEE_proj_params
@@ -1460,6 +1482,20 @@ class GETMovement:
         # Compute d from d_prime assuming the same surface angle and blade angle
         # TODO: modify this to handle varying blade angle (need to rework math as it assumes fixed rho)
         d = d_prime * np.sin(params['rho'])/np.sin(params['rho']-params['alpha'])
+
+        # Mask out points that are behind where the blade was at the start of the sweep
+        # This is only useful for the single step live computing of the blade depth prior to the sweep
+        # as otherwise the sweep ensures that D_r_DG[:,0] > params['G0_D'][0].
+        # And the only use of the live update right now is for the blade depth controller during data collection
+        # and the data collection is going to assume forward motion with a desired depth of cut for the forward motion
+        # we don't need this. Leaving it here in case it is useful in the future, but commenting out.
+        # back_pts = D_r_DG[:,0] < params['G0_D'][0]
+        # if np.any(back_pts):
+        #     debug = 1
+        # d_prime[back_pts] = params['G0_D'][2] - D_r_DG[back_pts,2] 
+        # # Assume flat terrain for back points, i.e. alpha = 0, rho = rho_prime, d=d_prime
+        # d[back_pts] = d_prime[back_pts]
+
         return d_prime, d
     
     def project_ground_depth(self, O_r_OG):
@@ -1711,11 +1747,14 @@ class GETMovement:
                 # O_r_OG = GET_plane_origin[None,:] + translation[None,:]*d_trans[:,None]
                 d_prime, d = self.project_blade_depth(FEE_proj_params, O_r_OG)
                 V_Q, Q = self.project_FEE_surcharge(FEE_proj_params, dV_Q, n_steps)
+                # Now update FEE_proj_params with the final projected surcharge value so that it can be used for the next sweep
+                if FEE_proj_params is not None and V_Q is not None:
+                    FEE_proj_params['V_Q'] = V_Q[-1]
                 # Make sure we can compute the blade depth (using d_prime as a valid flag for both surcharge and blade depth interp)
                 if d_prime is not None:
                     FEE_em_params_proj = FEE_proj_params.copy()
                     for key, val in FEE_em_params_proj.items():
-                        if key == 'T_OD':
+                        if key == 'T_OD' or key == 'G0_D':
                             continue
                         if key == 't_dir':
                             FEE_em_params_proj[key]  = np.broadcast_to(val[None,:], (n_steps,val.shape[0]))
