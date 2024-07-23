@@ -1252,10 +1252,22 @@ class GETMovement:
         # Now find the slope using weighted least squares
         # https://en.wikipedia.org/wiki/Weighted_least_squares
         X = [np.concatenate((np.ones((surf_point.shape[0], 1)),surf_point[:,0:1]),axis=1) for surf_point in surf_points]
+
+        A = [(np.linalg.inv(Xi.T@np.diag(Wi)@Xi)@Xi.T@np.diag(Wi)) for Xi, Wi in zip(X, W)]
+        H = [Xi@Ai for Xi, Ai in zip(X, A)]
+        # Compute the variance of the residuals for each line fit (aka. the Standard Error of the Estimate)^2
+        # Using ddof=2 because we are estimating the variance of the residuals from the data ( I'm not sure about this, maybe should be 1)
+        # We want it to be an unbiased estimator
+        var_r = np.array([np.var((np.eye(Hi.shape[0]) - Hi)@surf_point[:,1],ddof=2) for Hi, surf_point in zip(H, surf_points)], dtype=self.data_type)
+        # Should be equivalent to below (with numerical differences)
+        # std_err = np.array([np.sum((surf_point[:,1] - (Xi @ beta_hat_i))**2)/(surf_point.shape[0]-2) for Xi, Wi, surf_point, beta_hat_i in zip(X, W, surf_points, beta_hat)], dtype=self.data_type)
         # Note: Beta here is the intercept and slope of the line of best fit, not the soil failure angle
-        beta_hat = np.array([np.linalg.inv(Xi.T @ np.diag(Wi) @ Xi) @ (Xi.T @ np.diag(Wi) @ surf_point[:,1]) for Xi, Wi, surf_point in zip(X, W, surf_points)], dtype=self.data_type)
+        beta_hat = np.array([Ai@surf_point[:,1] for Ai, surf_point in zip(A, surf_points)], dtype=self.data_type)
+        # Compute the average variances of the line fit parameters
+        M_beta = np.array([Ai*var_ri@Ai.T for Ai, var_ri, surf_point in zip(A, var_r, surf_points)], dtype=self.data_type)
         alpha_hat = np.arctan(beta_hat[:,1])
-        # TODO: Consider computing the residuals to check the quality of the fit and then computing the covariance matrix
+        # Compute the average variances of alpha (variance along the translation direction)
+        var_alpha_t = np.mean(np.arctan(np.sqrt(M_beta[:,1,1]))**2)
 
         # Obtain rho_prime
         # Obtain the (unscaled) normal vector of the slicing plane
@@ -1274,6 +1286,8 @@ class GETMovement:
         intersections = (elevation_map[0, intersected_inds[valid,0], intersected_inds[valid,1]].get() - pierce_dist[valid])
         # d_prime = beta_hat_i[0] - intersections[i]
         d_hat = (beta_hat[:,0]-intersections)*np.sin(rho_hat)/np.sin(rho_hat - alpha_hat)
+        # Compute the average variances of d (variance along the translation direction)
+        var_d_t = np.mean(((np.sqrt(M_beta[:,0,0]))*np.sin(rho_hat)/np.sin(rho_hat - alpha_hat))**2)
 
         # Perform another weighted average to obtain d_ and alpha_. Then compute rho_ from rho_prime and alpha_
         # Define weights as a function of the depth of cut d_hat.
@@ -1290,14 +1304,14 @@ class GETMovement:
         # to augment these parameters and could help with error propagation.
         N = d_hat_np.shape[0]
         if N > 1:
-            var_d = np.sum((d_hat_np - d_)**2)/(N-1)
+            var_d_perp_t = np.sum((d_hat_np - d_)**2)/(N-1)
             # TODO: Think about how to include the variance of alpha_hat[i] in the variance of alpha_
             # This way we could account for uneven terrain along the direction of travel
-            var_alpha = np.sum((alpha_hat - alpha_)**2)/(N-1)
+            var_alpha_perp_t = np.sum((alpha_hat - alpha_)**2)/(N-1)
         else:
-            var_d = np.nan
-            var_alpha = np.nan
-        # print("d_Std: {}, alpha_std: {}".format(np.sqrt(var_d), np.sqrt(var_alpha)))
+            var_d_perp_t = np.nan
+            var_alpha_perp_t = np.nan
+        # print("d_Std: {}, alpha_std: {}".format(np.sqrt(var_d_perp_t), np.sqrt(var_alpha_perp_t)))
 
         # Find w by finding the extent of the cells centers along the perp t direction by projecting the cell centers onto the 
         # perp t direction and finding the min and max values.
@@ -1323,7 +1337,20 @@ class GETMovement:
         t_dir = translation[0:2] / np.linalg.norm(translation[0:2])
 
         # Create dictionary of parameters to return
-        FEE_em_params = {"alpha": alpha_, "rho": rho_, "d": d_, "w": w, "V_Q": V_Q, "d_prime": d_prime, "t_dir": t_dir, "var_d": var_d, "var_alpha": var_alpha, "var_w": var_w}
+        FEE_em_params = {
+            "alpha": alpha_,
+            "rho": rho_,
+            "d": d_,
+            "w": w,
+            "V_Q": V_Q,
+            "d_prime": d_prime,
+            "t_dir": t_dir,
+            "var_d_perp_t": var_d_perp_t,
+            "var_alpha_perp_t": var_alpha_perp_t,
+            "var_d_t": var_d_t,
+            "var_alpha_t": var_alpha_t,
+            "var_w": var_w
+        }
         return FEE_em_params
     
     def compute_delta_surcharge(self, loose_remaining, compact_swelled_moved, resolution):
