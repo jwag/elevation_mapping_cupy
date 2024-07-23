@@ -1514,7 +1514,7 @@ class GETMovement:
         # Transform the blade position to the blade depth calculation frame
         O_r_OG = np.concatenate((O_r_OG, np.ones((n,1), dtype=self.data_type)), axis=1)
         D_r_DG = (params['T_OD']@O_r_OG.T).T
-        d_prime = D_r_DG[:,2] + params['dist_to_ground']
+        d_prime = D_r_DG[:,2] - params['dist_to_ground']
         return d_prime
     
     def get_blade_depth(self ,M_r_MG, vel_xy, map_center):
