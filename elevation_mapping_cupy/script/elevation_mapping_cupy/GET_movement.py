@@ -1630,7 +1630,7 @@ class GETMovement:
         # TODO: Could perform ray cast even if there is no possibility of intersection if we just want to update the upper bound
         valid_cells = submap[2] > 0.5
         if not self.xp.any(valid_cells):
-            print("No valid cells in the swept volume")
+            # print("No valid cells in the swept volume")
             # TODO: We could however update the upper bound and is upper bound status of the cells...
             update_elevation = False
         else:
@@ -1640,7 +1640,7 @@ class GETMovement:
             dist_to_ground = min_sv_z - max_em_z
             self.ground_proj_params = self.set_blade_ground_dist_calc_params(dist_to_ground.get(), GET_plane_origin, translation)
             if dist_to_ground > 0:
-                print("No intersection with swept volume")
+                # print("No intersection with swept volume")
                 # TODO: We could also update the variance of the cells that are not intersected,
                 #       e.g. if the variance is high then we can reduce it if our swept volume is close to the ground
                 update_elevation = False
@@ -1672,7 +1672,7 @@ class GETMovement:
             intersections, intersected_lines, pierce_dist, invalid_intersections, invalid_lines = line_mesh_intersection(lines, swept_mesh, coincidence_tol=1e-6)
             map_update = False
             if len(intersections) > 0:
-                print("Intersections found")
+                # print("Intersections found")
                 # Make sure datatypes are consistent
                 intersections = intersections.astype(self.data_type)
                 pierce_dist = pierce_dist.astype(self.data_type)
@@ -1687,7 +1687,7 @@ class GETMovement:
                 # Find the direction of material movement
                 move_dir, valid_movement = self.material_movement_direction(normal, translation, normal_weight=self.GET_params['move_dir_normal_weight'])
                 if not valid_movement:
-                    print("Invalid movement direction, skipping update of elevation map")
+                    warnings.warn("Invalid movement direction, skipping update of elevation map")
                 else:
                     # Remove the material from the cells that are intersected
                     # Get the indices of the intersected cells
@@ -1766,7 +1766,7 @@ class GETMovement:
                     submap[6, deposit_inds[:,0], deposit_inds[:,1]] = 0.0
                     map_update = True
             if len(invalid_intersections) > 0:
-                print("Updating Upper Bound for non-overlapping cells")
+                # print("Updating Upper Bound for non-overlapping cells")
                 # Update the elevation map
                 # Get the indices of the intersected cells
                 ub_cells = cell_inds[invalid_lines] - bb_indices[0]
