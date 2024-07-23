@@ -926,7 +926,7 @@ class GETMovement:
         vertices = np.array([[0, blade_width/2.0, blade_height/2.0],
                             [0, -blade_width/2.0, blade_height/2.0],
                             [0, -blade_width/2.0, -blade_height/2.0],
-                            [0, blade_width/2.0, -blade_height/2.0]])
+                            [0, blade_width/2.0, -blade_height/2.0]], dtype=self.data_type)
         
         # curved_blade_vertices = np.array([[0.4, blade_width/2.0+0.4, blade_height/2.0],
         #                                 [0.4, blade_width/2.0+0.4, -blade_height/2.0],
@@ -948,7 +948,7 @@ class GETMovement:
         blade = trimesh.Trimesh(vertices=vertices, faces=faces_front)
 
         # Origin is assumed to be at center of the GET currently
-        blade_origin = np.array([0.0, 0.0, 0.0])
+        blade_origin = np.array([0.0, 0.0, 0.0], dtype=self.data_type)
 
         # # Rotate the blade about the Y axis at the origin by blade_angle degrees ccw
         # # The blade is rotated about the Y axis at the origin by blade_angle degrees ccw about the Y axis.
@@ -977,6 +977,7 @@ class GETMovement:
         """
         # Convert indices to points
         points_xy = (indices - cell_n / 2) * resolution + center[:2].reshape(1, 2)
+        points_xy = points_xy.astype(self.data_type)
         return points_xy
     
     def get_map_index(self, points, center, cell_n, resolution, round_dir="down"):
@@ -1139,7 +1140,7 @@ class GETMovement:
 
         # Obtain the points to fit the plane to in coordinates of (d_t, z)
         # where d_t is the distance along the movement direction and z is the height of the compacted soil surface
-        surf_points = [np.zeros((0,2)) for _ in range(n)]
+        surf_points = [np.zeros((0,2),dtype=self.data_type) for _ in range(n)]
 
         # This is a digitial differential analyzer (DDA) line algorithm
         # see https://en.wikipedia.org/wiki/Digital_differential_analyzer_(graphics_algorithm)
@@ -1181,7 +1182,7 @@ class GETMovement:
                     # If the distance is less than or equal to the maximum length, include in Q calculation
                     if d_t <= self.GET_params['l_surcharge_max']:
                         surcharge_inds = np.concatenate((surcharge_inds, np.array([[xind, yind]])), axis=0)
-                    surf_points[i] = np.concatenate((surf_points[i], np.array([[d_t[0], z]])), axis=0)
+                    surf_points[i] = np.concatenate((surf_points[i], np.array([[d_t[0], z]])), axis=0, dtype=self.data_type)
                 x = x + dx
                 y = y + dy
                 if (x < 0 or x >= cell_n or y < 0 or y >= cell_n):
@@ -1338,22 +1339,22 @@ class GETMovement:
 
         # Create dictionary of parameters to return
         FEE_em_params = {
-            "alpha": alpha_,
-            "rho": rho_,
-            "d": d_,
-            "w": w,
-            "V_Q": V_Q,
-            "d_prime": d_prime,
-            "t_dir": t_dir,
-            "var_d_perp_t": var_d_perp_t,
-            "var_alpha_perp_t": var_alpha_perp_t,
-            "var_d_t": var_d_t,
-            "var_alpha_t": var_alpha_t,
-            "var_w": var_w
+            "alpha": alpha_.astype(self.data_type),
+            "rho": rho_.astype(self.data_type),
+            "d": d_.astype(self.data_type),
+            "w": w.astype(self.data_type),
+            "V_Q": V_Q.astype(self.data_type),
+            "d_prime": d_prime.astype(self.data_type),
+            "t_dir": t_dir.astype(self.data_type),
+            "var_d_perp_t": var_d_perp_t.astype(self.data_type),
+            "var_alpha_perp_t": var_alpha_perp_t.astype(self.data_type),
+            "var_d_t": var_d_t.astype(self.data_type),
+            "var_alpha_t": var_alpha_t.astype(self.data_type),
+            "var_w": var_w.astype(self.data_type)
         }
         return FEE_em_params
     
-    def compute_delta_surcharge(self, loose_remaining, compact_swelled_moved, resolution):
+    def compute_delta_surcharge(self, loose_remaining, compact_swelled_moved, loose_spilled, resolution):
         """
         The change in surcharge over the sweep is computed using the difference between the compacted soil
         that has been swelled and moved and the loose soil that remains. 
@@ -1361,12 +1362,14 @@ class GETMovement:
         Args:
             loose_remaining (np.ndarray):       The loose soil that remains in the intersected cells
             compact_swelled_moved (np.ndarray): The compacted soil that has been swelled and moved
+            loose_spilled (np.ndarray):         The loose soil that has been spilled (not deposited anywere rn)
             resolution (float):                 The resolution of the map
         Returns:
             dV_Q (float):                       The change in surcharge volume over the sweep
         """
         # TODO: Double check that this makes sense
-        dV_Q = (np.sum(compact_swelled_moved) - np.sum(loose_remaining))*resolution**2
+        dV_Q = (np.sum(compact_swelled_moved) - np.sum(loose_remaining) - np.sum(loose_spilled))*resolution**2
+        dV_Q = dV_Q.astype(self.data_type)
         return dV_Q
     
     def project_FEE_surcharge(self, FEE_em_params, dV_Q, n_steps):
@@ -1406,6 +1409,8 @@ class GETMovement:
         # In math - compacted_soil_moist_unit_weight: gamma (fixed value for elevation mapping),
         #           swell_factor: epsilon
         Q = V_Q * self.GET_params['compacted_soil_moist_unit_weight'] / self.GET_params['swell_factor']
+        Q = Q.astype(self.data_type)
+        V_Q = V_Q.astype(self.data_type)
 
         return V_Q, Q
     
@@ -1610,9 +1615,10 @@ class GETMovement:
         assert n_steps == O_r_OG.shape[0], "The number of time steps must match the number of blade positions"
         # Obtain a map frame aligned bounding box for the swept volume
         bbox = swept_mesh.bounding_box
+        bbox_verts = bbox.vertices.astype(self.data_type)
         # Find cells in the elevation map that are within the bounding box of the swept volume
         map_center = np.array([0.0, 0.0, 0.0], dtype=self.data_type)
-        bb_indices, points_minmax = self.bounding_box_to_map_index(bbox.vertices, map_center, cell_n, resolution)
+        bb_indices, points_minmax = self.bounding_box_to_map_index(bbox_verts, map_center, cell_n, resolution)
         # Note that these z values are in the map origin frame
         min_sv_z = points_minmax[0, 2]
         max_sv_z = points_minmax[1, 2]
@@ -1667,6 +1673,10 @@ class GETMovement:
             map_update = False
             if len(intersections) > 0:
                 print("Intersections found")
+                # Make sure datatypes are consistent
+                intersections = intersections.astype(self.data_type)
+                pierce_dist = pierce_dist.astype(self.data_type)
+                invalid_intersections = invalid_intersections.astype(self.data_type)
                 if obtain_FEE_em_params:
                     # Obtain the geometry parameters for the FEE
                     assert GET_plane_origin is not None, "GET_plane_origin must be provided to obtain FEE geometry parameters"
@@ -1727,7 +1737,8 @@ class GETMovement:
                     # Compute the change in surcharge over the sweep prior to dealing with errors
                     # in the deposited locations
                     compact_swelled_moved = compact_moved*self.GET_params['swell_factor']
-                    dV_Q = self.compute_delta_surcharge(loose_remaining, compact_swelled_moved, resolution)
+                    loose_spilled = loose_moved * self.GET_params['spill_factor']
+                    dV_Q = self.compute_delta_surcharge(loose_remaining, compact_swelled_moved, loose_spilled, resolution)
                     valid_deposit_inds = submap[2, deposit_inds[:,0], deposit_inds[:,1]] > 0.5
                     # Handle case where the material is deposited outside the valid portion of the map
                     # a deposition locaiton may need to be a a cell that is within the map,
@@ -1737,9 +1748,10 @@ class GETMovement:
                         # pierce_dist = pierce_dist[valid_deposit_inds]
                         compact_moved = compact_moved[valid_deposit_inds]
                         loose_moved = loose_moved[valid_deposit_inds]
+                        loose_spilled = loose_spilled[valid_deposit_inds]
                         start_var = start_var[valid_deposit_inds]
                     # Deposit the material in the new location for elevation and loose material
-                    delta_h_swelled = compact_moved*self.GET_params['swell_factor'] + loose_moved
+                    delta_h_swelled = compact_moved*self.GET_params['swell_factor'] + loose_moved - loose_spilled
                     # If swell factor is 1 then should be equal to pierce_dist
                     submap[0, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled
                     submap[7, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled
@@ -1871,6 +1883,8 @@ class GETMovement:
             roll (float):                   The roll of the GET in degrees
             FEE (bool):                     Whether to obtain the geometry parameters for the FEE
         """
+        resolution = np.float32(resolution)
+        var_h = np.float32(var_h)
         # First define swept volume of the GET
         # The swept volume is the volume of the material that the GET has moved through
         # as it moves from T_MG0 to T_MG1
@@ -1887,7 +1901,7 @@ class GETMovement:
         T_OG0[:3,3] -= map_center
         # Starting face normal and translation vector are used to determine the direction of material movement (a heuristic)
         # Obtain the normal of the original surface of the GET and put in map origin frame
-        normal = T_OG0[:3, :3]@self.GET_mesh.face_normals[0]
+        normal = T_OG0[:3, :3]@self.GET_mesh.face_normals[0].astype(self.data_type)
         # Obtain a point on the plane of the GET in the map origin frame, used for obtaining FEE geometry parameters
         # Using the center point of the geometry for now
         GET_plane_origin = T_OG0[:3, :3]@self.GET_geometry_origin + T_OG0[:3, 3]
