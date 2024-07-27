@@ -1792,14 +1792,6 @@ class GETMovement:
                 # Make sure we can compute the blade depth (using d_prime as a valid flag for both surcharge and blade depth interp)
                 if d_prime is not None:
                     FEE_em_params_proj = FEE_proj_params.copy()
-                    for key, val in FEE_em_params_proj.items():
-                        if key == 'T_OD' or key == 'G0_D':
-                            continue
-                        if key == 't_dir':
-                            FEE_em_params_proj[key]  = np.broadcast_to(val[None,:], (n_steps,val.shape[0]))
-                        else:
-                            # expand the array to the number of steps for fixed values
-                            FEE_em_params_proj[key] = np.broadcast_to(val, n_steps)
                     # Could pull out T_OD if it isn't necessary
                     # Overwrite with the projected values
                     FEE_em_params_proj['d_prime'] = d_prime
