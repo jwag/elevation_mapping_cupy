@@ -1310,8 +1310,8 @@ class GETMovement:
             # This way we could account for uneven terrain along the direction of travel
             var_alpha_perp_t = np.sum((alpha_hat - alpha_)**2)/(N-1)
         else:
-            var_d_perp_t = np.nan
-            var_alpha_perp_t = np.nan
+            var_d_perp_t = np.array(np.nan, dtype=self.data_type)
+            var_alpha_perp_t = np.array(np.nan, dtype=self.data_type)
         # print("d_Std: {}, alpha_std: {}".format(np.sqrt(var_d_perp_t), np.sqrt(var_alpha_perp_t)))
 
         # Find w by finding the extent of the cells centers along the perp t direction by projecting the cell centers onto the 
