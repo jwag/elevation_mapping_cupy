@@ -1104,13 +1104,15 @@ class GETMovement:
         _, v, d = trimesh.intersections.planes_lines(GET_plane_origin[np.newaxis], normal[np.newaxis], point[np.newaxis], line_dir, return_distance=True)
         assert v == 1.0, "The line should always intersect the plane"
         # For some reason this returns negative distances sometimes
-        d = abs(d)
+        if d < 0:
+            # TODO: Figure out why this occurs
+            d = abs(d)
         return d
     
     def get_surface_points(self, intersected_cells, t_dir, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution):
         """
         For each intersected cell, find the set of surface points in the direction of movement, t_dir,
-        and return the points in the form of (d_t, z) where d_t is the distance along the movement direction.
+        and return the points in the form of (x_t, z) where x_t is the distance along the movement direction.
         Also find the volume of the surcharge, V_Q, in the region in front of the intersected cells.
 
         Args:
@@ -1123,7 +1125,8 @@ class GETMovement:
             cell_n (int):                                   The number of cells in the map
             resolution (float):                             The resolution of the map
         Returns:
-            surf_points (list):                             A list of arrays of surface points (d_t, z) for each intersected cell
+            surf_points (list):                             A list of arrays of surface points (x_t, z) for each intersected cell
+            surf_points_inds (list):                        A list of arrays of surface point indices (x_ind, y_ind) for each intersected cell (corresponds to surf_points)
             valid (np.ndarray) (n,):                        A boolean array indicating if the cell is valid (intersected with compact soil)
             V_Q (float):                                    The volume of the surcharge in the region in front of the intersected cells
 
@@ -1138,9 +1141,10 @@ class GETMovement:
         # Warning: l_surcharge_max must be less than or equal to l_fit_max right now, possibly fix this
         surcharge_inds = np.zeros((0,2), dtype=int)
 
-        # Obtain the points to fit the plane to in coordinates of (d_t, z)
-        # where d_t is the distance along the movement direction and z is the height of the compacted soil surface
+        # Obtain the points to fit the plane to in coordinates of (x_t, z)
+        # where x_t is the distance along the movement direction and z is the height of the compacted soil surface
         surf_points = [np.zeros((0,2),dtype=self.data_type) for _ in range(n)]
+        surf_points_inds = [np.zeros((0,2),dtype=int) for _ in range(n)]
 
         # This is a digitial differential analyzer (DDA) line algorithm
         # see https://en.wikipedia.org/wiki/Digital_differential_analyzer_(graphics_algorithm)
@@ -1170,8 +1174,8 @@ class GETMovement:
                 # Obtain the height of the intersection for projection onto the blade surface in get_xy_GET_distance()
                 point_z = elevation_map[0, intersected_cell_ind[0], intersected_cell_ind[1]].get() - pierce_dist[i]
                 inds = np.array([xind, yind])
-                d_t = self.get_xy_GET_distance(inds, point_z, t_dir, GET_plane_origin, normal, cell_n, resolution)
-                if (d_t >  self.GET_params['l_fit_max']):
+                x_t = self.get_xy_GET_distance(inds, point_z, t_dir, GET_plane_origin, normal, cell_n, resolution)
+                if (x_t >  self.GET_params['l_fit_max']):
                     assert surf_points[i].shape[0] > 0, "No points found for surface"
                     break
                 if (elevation_map[2, xind, yind] > 0.5):
@@ -1180,9 +1184,10 @@ class GETMovement:
                     q = elevation_map[7, xind, yind].get()
                     z = elevation_map[0, xind, yind].get() - q
                     # If the distance is less than or equal to the maximum length, include in Q calculation
-                    if d_t <= self.GET_params['l_surcharge_max']:
+                    if x_t <= self.GET_params['l_surcharge_max']:
                         surcharge_inds = np.concatenate((surcharge_inds, np.array([[xind, yind]])), axis=0)
-                    surf_points[i] = np.concatenate((surf_points[i], np.array([[d_t[0], z]])), axis=0, dtype=self.data_type)
+                    surf_points[i] = np.concatenate((surf_points[i], np.array([[x_t[0], z]])), axis=0, dtype=self.data_type)
+                    surf_points_inds[i] = np.concatenate((surf_points_inds[i], np.array([[xind, yind]])), axis=0, dtype=int)
                 x = x + dx
                 y = y + dy
                 if (x < 0 or x >= cell_n or y < 0 or y >= cell_n):
@@ -1198,7 +1203,7 @@ class GETMovement:
         # Now calculate the volume of the surcharge
         V_Q = elevation_map[7, surcharge_inds[:,0], surcharge_inds[:,1]].sum()*resolution**2
         V_Q = V_Q.get()
-        return surf_points, valid, V_Q
+        return surf_points, surf_points_inds, valid, V_Q
     
     def obtain_FEE_em_params(self, intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution):
         """
@@ -1237,14 +1242,18 @@ class GETMovement:
 
         Returns:
             FEE_params (dict):                   The FEE parameters alpha, rho, d, w, V_Q (prior to soil failure)
+            surf_points_dict (dict):             A dictionary of the surface points for each intersected cell {[points[n,2]], [map_inds[n,2]]}
+                                                 where points has the form (x_t, z) and n is the number of identified poitns per intersected cell
+                                                 and there lists are length N for N intersected cells.
         """
-        surf_points, valid, V_Q = self.get_surface_points(intersected_inds, translation[0:2], elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution)
+        surf_points, surf_points_inds, valid, V_Q = self.get_surface_points(intersected_inds, translation[0:2], elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution)
         if np.sum(valid) == 0:
             # Can be caused by an unitialized height map, or only intersections with loose soil
             # warnings.warn("No valid surface points found for FEE")
             return None
         # Only use valid surface points in FEE calc
         surf_points = [surf_point for surf_point, is_valid in zip(surf_points, valid) if is_valid]
+        surf_points_inds = [surf_point_ind for surf_point_ind, is_valid in zip(surf_points_inds, valid) if is_valid]
         # Now fit surface points to a line to get the slope of the surface in the direction of movement (alpha_i)
         # First compute weights for the points
         W = [np.exp(-self.GET_params['surf_interp_coeff'] * surf_point[:,0]) for surf_point in surf_points]
@@ -1285,8 +1294,15 @@ class GETMovement:
         # Find the difference between the lowest contacted cell and the point where the compact surface
         # approximated by the line fit intersects the blade surface
         intersections = (elevation_map[0, intersected_inds[valid,0], intersected_inds[valid,1]].get() - pierce_dist[valid])
-        # d_prime = beta_hat_i[0] - intersections[i]
-        d_hat = (beta_hat[:,0]-intersections)*np.sin(rho_hat)/np.sin(rho_hat - alpha_hat)
+        # d_prime_prime_hat = beta_hat_i[0] - intersections[i]
+        d_hat = (beta_hat[:,0]-intersections)*np.cos(alpha_hat)
+        # TODO: Debug this and possibly deal with change in indexing of lower calcs
+        # Handle possible negative d_hats by excluding them from the average
+        if np.any(d_hat < 0):
+            warnings.warn("Negative depth of cut found in FEE calculation. Excluding from average. Consider reducing sweep distance.")
+            valid = np.logical_and(valid, d_hat >= 0)
+            d_hat = d_hat[valid]
+        # For later use in determing d_w = d_prime_prime + x_t*(np.tan(alpha)-np.tan(beta+alpha))
         # Compute the average variances of d (variance along the translation direction)
         var_d_t = np.mean(((np.sqrt(M_beta[:,0,0]))*np.sin(rho_hat)/np.sin(rho_hat - alpha_hat))**2)
 
@@ -1300,6 +1316,7 @@ class GETMovement:
         rho_ = alpha_ + rho_prime
         # Obtain the depth of cut wrt the horizontal plane that intersects the blade at at the blade-surface intersection point
         d_prime = d_ *  np.sin(rho_ - alpha_) /np.sin(rho_)
+        d_prime_prime = d_ / np.cos(alpha_)
         # TODO: Figure out some way to check the quality of the fit and the validity of the parameters combining the individual
         # line fit accuracy with the avearaging of the slices. This information could be valuable to a network that is learning
         # to augment these parameters and could help with error propagation.
@@ -1345,6 +1362,7 @@ class GETMovement:
             "w": w.astype(self.data_type),
             "V_Q": V_Q.astype(self.data_type),
             "d_prime": d_prime.astype(self.data_type),
+            "d_prime_prime": d_prime_prime.astype(self.data_type),
             "t_dir": t_dir.astype(self.data_type),
             "var_d_perp_t": var_d_perp_t.astype(self.data_type),
             "var_alpha_perp_t": var_alpha_perp_t.astype(self.data_type),
@@ -1352,7 +1370,13 @@ class GETMovement:
             "var_alpha_t": var_alpha_t.astype(self.data_type),
             "var_w": var_w.astype(self.data_type)
         }
-        return FEE_em_params
+
+        # Create a dictionary for surface points for later identification of which cells to apply estiamted soil-props to
+        surf_points_dict = {}
+        # Only need to store the x_t values for the surface points right now, but we will leave the z values for now
+        surf_points_dict['points'] = surf_points
+        surf_points_dict['map_inds'] = surf_points_inds
+        return FEE_em_params, surf_points_dict
     
     def compute_delta_surcharge(self, loose_remaining, compact_swelled_moved, loose_spilled, resolution):
         """
@@ -1486,6 +1510,8 @@ class GETMovement:
         Project the blade depth given the current position of the blade.
         Obtain the blade depth wrt horizontal, d_prime, (useful for control purposes),
         and d, using the provided depth of cut parameters.
+        # TODO: Consider modifying this to use depth of cut at blade tip wrt. horizontal instead surface intersection
+        #       i.e. d_prime_prime instead of d_prime
         Args:
             params (dict):              The parameters for the FEE projection
             O_r_OG (np.ndarray) (n,3):  The position of the blade (center) in the map origin frame
@@ -1611,6 +1637,10 @@ class GETMovement:
             FEE_proj_params (dict):          The parameters for the FEE projection
             obtain_FEE_em_params (bool):     Whether to obtain the EM derived parameters for the FEE
             GET_plane_origin (np.ndarray):   The origin of the GET plane in the map frame (any point on the surface of the GET)
+        Returns:
+            FEE_em_params_proj (dict):       The FEE EM parameters for the projected cells
+            FEE_proj_params (dict):          The possibly updated FEE projection parameters
+            surf_points_dict (dict):         A dictionary of the surface points for each intersected cell {[points[n,2]], [map_inds[n,2]]}
         """
         assert n_steps == O_r_OG.shape[0], "The number of time steps must match the number of blade positions"
         # Obtain a map frame aligned bounding box for the swept volume
@@ -1645,6 +1675,7 @@ class GETMovement:
                 #       e.g. if the variance is high then we can reduce it if our swept volume is close to the ground
                 update_elevation = False
         FEE_em_params_proj = None
+        surf_points_dict = None
         dV_Q = 0.0
         # Debugging Override
         # update_elevation = True
@@ -1681,7 +1712,7 @@ class GETMovement:
                     # Obtain the geometry parameters for the FEE
                     assert GET_plane_origin is not None, "GET_plane_origin must be provided to obtain FEE geometry parameters"
                     intersected_inds = cell_inds[intersected_lines]
-                    FEE_em_params = self.obtain_FEE_em_params(intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution)
+                    FEE_em_params, surf_points_dict = self.obtain_FEE_em_params(intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution)
                 if FEE_em_params is not None:
                     FEE_proj_params = self.set_blade_depth_calc_params(FEE_em_params, GET_plane_origin, translation)
                 # Find the direction of material movement
@@ -1799,7 +1830,7 @@ class GETMovement:
                     FEE_em_params_proj['V_Q'] = V_Q
                     FEE_em_params_proj['Q'] = Q
                     FEE_em_params_proj['d_step'] = np.arange(n_steps)
-        return FEE_em_params_proj, FEE_proj_params
+        return FEE_em_params_proj, FEE_proj_params, surf_points_dict
 
     def material_movement_direction(self, normal, translation, normal_weight=0.5):
         """
@@ -1906,30 +1937,33 @@ class GETMovement:
         # Initialize in case of no intersections
         # TODO: Figure out how to handle the negative swept volume and the direction of the forces
         FEE_em_params = None
+        surf_points_dict = None
         FEE_em_params_pos = None
         FEE_em_params_neg = None
         if pos_swept_mesh is not None:
             # Move the swept volume to the map origin frame
             pos_swept_mesh.apply_transform(T_OG0)
-            FEE_em_params_pos, self.pos_swept_mesh_FEE_projection_params = self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params_pos, self.pos_swept_mesh_FEE_projection_params, surf_points_dict_pos = self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         if neg_swept_mesh is not None:
             # Flip the direction of the normal for the negative swept volume
             normal = -normal
             # Move the swept volume to the map origin frame
             neg_swept_mesh.apply_transform(T_OG0)
-            FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params = self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params, surf_points_dict_neg = self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         if FEE_em_params_pos is not None and FEE_em_params_neg is not None:
             # Could support this elsewhere by returning both and then combining them after computing the FEE force
             raise NotImplementedError("Combining the FEE parameters for the positive and negative swept volumes is not yet implemented")
         elif FEE_em_params_pos is not None:
             FEE_em_params = FEE_em_params_pos
+            surf_points_dict = surf_points_dict_pos
         elif FEE_em_params_neg is not None:
             # Need to support this by including the translation direction of the portion of the swept volume
             warnings.warn("Negative swept volume FEE parameters are only partially tested")
             FEE_em_params = FEE_em_params_neg
+            surf_points_dict = surf_points_dict_neg
         
         # Only return positive FEE parameters for now
-        return FEE_em_params
+        return FEE_em_params, surf_points_dict
 
 
 if __name__ == "__main__":

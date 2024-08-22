@@ -504,6 +504,10 @@ class ElevationMap:
         Returns:
             FEE_em_params:                              FEE parameters obtained from map as dictionary containing:
                                                         d, alpha, rho, w, Q (None if no valid GET movement is detected)
+            surf_points_dict:                           Dictionary containing the surface points for each slice/intersected cell
+                                                        with keys points and inds where points includes x_t and z, the distance to 
+                                                        the blade along the translation direction and the height of the cell, and
+                                                        inds includes the indicies of the cells used for each line/surface fit for each slice.
         """
         T_MG0 = np.asarray(T_MG0, dtype=self.data_type)
         T_MG1 = np.asarray(T_MG1, dtype=self.data_type)
@@ -512,7 +516,7 @@ class ElevationMap:
             position = np.array([0, 0, 0], dtype=self.data_type)
             self.get_position(position)
             # TODO: Make the varh derived from the pose uncertainty and use a sensor model
-            FEE_em_params = self.GETs[GET_ID].update_map_with_GET_movement(
+            FEE_em_params, surf_points_dict = self.GETs[GET_ID].update_map_with_GET_movement(
                 self.elevation_map,
                 position,
                 self.cell_n,
@@ -524,7 +528,7 @@ class ElevationMap:
                 var_h,
                 roll,
             )
-        return FEE_em_params
+        return FEE_em_params, surf_points_dict
     
     def get_GET_depth(self,
                       GET_ID: str,
