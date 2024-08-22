@@ -53,6 +53,9 @@ xp = cp
 pool = cp.cuda.MemoryPool(cp.cuda.malloc_managed)
 cp.cuda.set_allocator(pool.malloc)
 
+# For Soil Prop Estimation
+from train_model import DozerSoilPropEstModel
+import copy
 
 class ElevationMap:
     """Core elevation mapping class."""
@@ -154,7 +157,12 @@ class ElevationMap:
                 GET_param_name = GET_model_name + "_GET_params"
                 GET_params = config.get(GET_param_name, {})
                 self.GETs[sensor_ID] = GETMovement(sensor_ID, GET_model_name, GET_params, xp=xp)
-
+                # Only load a single soil prop est model for now
+                if param.use_soil_property_estimation:
+                    if not hasattr(self, 'dz'):
+                        self.dz = DozerSoilPropEstModel.load_from_checkpoint(param.soil_prop_est_net_checkpoint_path, mode='deploy')
+                    else:
+                        print("Soil prop est model already loaded")
     def clear(self):
         """Reset all the layers of the elevation & the semantic map."""
         with self.map_lock:
@@ -489,7 +497,8 @@ class ElevationMap:
                            M_r_MG: np.ndarray,
                            n_steps: np.int32,
                            var_h: float,
-                           roll: float
+                           roll: float,
+                           soil_nn_input: dict
     ):
         """Input the GET movement and update the elevation map.
 
@@ -501,6 +510,7 @@ class ElevationMap:
             n_steps (np.int32):                         Number of time steps between T_MG0 and T_MG1 (inclusive) used for interpolation
             var_h (float):                              Variance of the height measurement
             roll (float):                               Roll angle of the GET frame w.r.t. the map frame
+            soil_nn_input (dict):                       Dictionary containing the input data for the soil property estimation model
         Returns:
             FEE_em_params:                              FEE parameters obtained from map as dictionary containing:
                                                         d, alpha, rho, w, Q (None if no valid GET movement is detected)
@@ -528,6 +538,29 @@ class ElevationMap:
                 var_h,
                 roll,
             )
+
+            if self.param.use_soil_property_estimation and FEE_em_params is not None:
+                # Now predict the soil properties
+                sample_len = self.dz.hparams['sample_len']
+                assert len(soil_nn_input['position']) == len(soil_nn_input['velocity']) == len(soil_nn_input['action'] == sample_len), "Lengths of position, velocity, and action must be the same"
+                # Add the FEE parameters
+                em_metadata = copy.deepcopy(FEE_em_params) # TODO: Do we need to copy here?
+                # Offset the step to match the sample length (the params should correspond to the end of the sample)
+                # These two should beare equivalent
+                # sweep_start_step = sample_len - em_metadata['d_step'][-1] - 1
+                sweep_start_step = sample_len - len(em_metadata['d_step'])
+                em_metadata['step'] = sweep_start_step + em_metadata['d_step'] # Needs to be a list because of the way model process batches
+                soil_nn_input['em_metadata'] = [em_metadata]
+                # Pass empty PGT metadata
+                soil_nn_input['metadata'] = {}
+                dataset = self.dz.deploy_dataset([soil_nn_input])
+                dataloader = self.dz.deploy_dataloader(dataset)
+                metadata = self.dz.deploy_step(next(iter(dataloader)))
+                print(metadata)
+
+                # Now add the estimated soil properties to the semantic map
+
+        # TODO: Possibly get rid of surf_points_dict and just return FEE_em_params once we get working with semantic map
         return FEE_em_params, surf_points_dict
     
     def get_GET_depth(self,

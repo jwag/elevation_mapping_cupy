@@ -56,6 +56,10 @@ enable_normal_color: false                      # If true, the map contains 'col
 use_chainer: false                              # Use chainer as a backend of traversability filter or pytorch. If false, it uses pytorch. pytorch requires ~2GB more GPU memory compared to chainer but runs faster.
 # weight_file: '$(rospack find elevation_mapping_cupy)/config/core/weights.dat'               # Weight file for traversability filter
 
+#### Soil Property Estimation ########
+use_soil_property_estimation: true             # Use soil property estimation or not., i.e. run the soil property estimation network and add the estimated soil properties to the map.
+soil_prop_est_net_checkpoint_path: './lightning_logs/Elevation-Mapping1-phys_inf/lightning_logs/version_42/checkpoints/last.ckpt' # Path to the checkpoint of the soil property estimation network.
+
 #### Upper bound ########
 use_only_above_for_upper_bound: false
 

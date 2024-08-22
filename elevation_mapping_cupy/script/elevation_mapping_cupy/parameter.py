@@ -134,6 +134,10 @@ class Parameter(Serializable):
                 (Default: ``None``)
         true_cell_n: True number of cells in the map.  
                      (Default: ``None``)
+        use_soil_property_estimation: Use soil property estimation network.
+                    (Default: ``False``)
+        soil_prop_est_net_checkpoint_path: Path to the soil property estimation network checkpoint.
+                    (Default: ``None``)
         
     """
     resolution: float = 0.04  # resolution in m.
@@ -230,6 +234,9 @@ class Parameter(Serializable):
     w2: np.ndarray = field(default_factory=lambda: np.zeros((4, 1, 3, 3)))  # weights for the second layer
     w3: np.ndarray = field(default_factory=lambda: np.zeros((4, 1, 3, 3)))  # weights for the third layer
     w_out: np.ndarray = field(default_factory=lambda: np.zeros((1, 12, 1, 1)))  # weights for the output layer
+
+    use_soil_property_estimation: bool = False  # use soil property estimation network
+    soil_prop_est_net_checkpoint_path: str = None  # path to the soil property estimation network checkpoint
 
     # # not configurable params
     true_map_length: float = None  # true length of the map

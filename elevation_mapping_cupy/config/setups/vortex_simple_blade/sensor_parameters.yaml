@@ -54,6 +54,7 @@ subscribers:
   simple_flat_blade:
     data_type: GET
     GET_model_name: 'simple_blade'
+    soil_prop_est_net_checkpoint_path: './lightning_logs/Elevation-Mapping1-phys_inf/lightning_logs/version_42/checkpoints/last.ckpt'
     simple_blade_GET_params:
       blade_width: 3.164
       blade_height: 0.660
