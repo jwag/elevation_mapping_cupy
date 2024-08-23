@@ -1298,10 +1298,13 @@ class GETMovement:
         d_hat = (beta_hat[:,0]-intersections)*np.cos(alpha_hat)
         # TODO: Debug this and possibly deal with change in indexing of lower calcs
         # Handle possible negative d_hats by excluding them from the average
-        if np.any(d_hat < 0):
+        d_valid = d_hat >= 0
+        if np.any(~d_valid):
             warnings.warn("Negative depth of cut found in FEE calculation. Excluding from average. Consider reducing sweep distance.")
-            valid = np.logical_and(valid, d_hat >= 0)
-            d_hat = d_hat[valid]
+            d_hat = d_hat[d_valid]
+            alpha_hat = alpha_hat[d_valid]
+            rho_hat = rho_hat[d_valid]
+            M_beta = M_beta[d_valid]
         # For later use in determing d_w = d_prime_prime + x_t*(np.tan(alpha)-np.tan(beta+alpha))
         # Compute the average variances of d (variance along the translation direction)
         var_d_t = np.mean(((np.sqrt(M_beta[:,0,0]))*np.sin(rho_hat)/np.sin(rho_hat - alpha_hat))**2)
@@ -1338,7 +1341,7 @@ class GETMovement:
         # Get xy coordinates (we want it in the map origin frame so make center = 0,0,0)
         center = np.array([0.0, 0.0, 0.0], dtype=self.data_type)
         # TODO: Perform this elsewhere so we don't have to repeat this calc which is done in get_surface_points()
-        points_xy = self.map_index_to_point_xy(intersected_inds[valid], center, cell_n, resolution)
+        points_xy = self.map_index_to_point_xy(intersected_inds[valid][d_valid], center, cell_n, resolution)
         # Project the points onto the perp t direction
         points_perp_t = np.dot(points_xy, perp_t_norm)
         w = np.max(points_perp_t) - np.min(points_perp_t)

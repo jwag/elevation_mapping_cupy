@@ -279,7 +279,7 @@ class SemanticMap:
         )
 
         # Resetting new_map for the layers that are to be deleted
-        self.new_map[self.delete_new_layers] = 0.0
+        # self.new_map[self.delete_new_layers] = 0.0
 
         # First compute the soil_wedge_inds and soil_wedge_weights as they are the same across properties
         # Compute the maximum acceptable distance from the soil surface for a cell to be considered part of the soil wedge
@@ -289,25 +289,28 @@ class SemanticMap:
         soil_wedge_inds = np.zeros((0,2), dtype=np.uint32)
         soil_wedge_weights = np.zeros((0,), dtype=self.param.data_type)
         for p, mi in zip(surf_points_dict["points"], surf_points_dict["map_inds"]):
-            valid_inds = p[:,1] < x_t_max
+            valid_inds = p[:,0] < x_t_max
             if valid_inds.any():
                 soil_wedge_inds = np.append(soil_wedge_inds, mi[valid_inds], axis=0)
                 # Normalize weights by the maximum distance from the blade
                 # Could also use depth instead of distance via d_w = d_prime_prime - x_t * (tan(alpha+beta) - tan(alpha))
                 # If normalizing though, these should be equivalent
-                soil_wedge_weights = xp.append(soil_wedge_weights, 1.0-p[valid_inds,1]/x_t_max, axis=0)
+                soil_wedge_weights = xp.append(soil_wedge_weights, 1.0-p[valid_inds,0]/x_t_max, axis=0)
         # make sure that the index is unique and take the highest weight
         # TODO: Use cp.unique after upgrading to cupy
-        soil_wedge_inds_, idx, un_inv = np.unique(soil_wedge_inds, return_index=True, return_inverse=True, axis=0)
-        # Take the maximum weight for each unique index
-        # make array of true/false values for each unique index
-        # TODO: Speed this up by getting rid of for loop, but this should work
-        if len(idx) < soil_wedge_inds.shape[0]:
-            for i in range(len(soil_wedge_inds_)):
-                soil_wedge_weights[i] = cp.max(soil_wedge_weights[idx[i] == un_inv])
-            soil_wedge_inds = soil_wedge_inds_
-        else: # No duplicates # TODO: Comment out
-            debug=1
+        # soil_wedge_inds_, idx, un_inv = np.unique(soil_wedge_inds, return_index=True, return_inverse=True, axis=0)
+        # # Take the maximum weight for each unique index
+        # # make array of true/false values for each unique index
+        # # TODO: Speed this up by getting rid of for loop, but this should work
+        # if len(idx) < soil_wedge_inds.shape[0]:
+        #     soil_wedge_weights_ = np.zeros((len(idx),), dtype=self.param.data_type)
+        #     print("Duplicate indices found in soil_wedge_inds")
+        #     for i in range(len(idx)):
+        #         # TODO: WARNING: THIS INDEXING IS WRONG, FIX IT
+        #         soil_wedge_weights_[i] = cp.max(soil_wedge_weights[idx[i] == un_inv])
+        #     soil_wedge_inds = soil_wedge_inds_
+        # else: # No duplicates # TODO: Comment out
+        #     debug=1
         
         # ensure that the soil_wedge_inds and weights are xp arrays
         soil_wedge_inds = xp.array(soil_wedge_inds, dtype=xp.uint32)
@@ -324,18 +327,20 @@ class SemanticMap:
                 print(f"Layer {channel} not found!")
                 return
 
+            # extract corresponding FEE parameter and conver to cp datatype....
+            # param = xp.array(FEE_params[channel], dtype=self.param.data_type)
+            param = self.param.data_type(FEE_params[channel].item())
             # update the layers with the fusion algorithm
-                        # update the layers with the fusion algorithm
             self.fusion_manager.execute_GET_plugin(
                 fusion,
                 cp.uint64(sem_map_idx),
-                FEE_params[channel],
+                param,
                 soil_wedge_inds,
                 soil_wedge_weights,
                 self.semantic_map,
-                self.new_map,
             )
                 # self.elements_to_shift, # Might need this if we want to shift the map, but I don't currently understand it
+            debug=1
 
     def update_layers_image(
         self,

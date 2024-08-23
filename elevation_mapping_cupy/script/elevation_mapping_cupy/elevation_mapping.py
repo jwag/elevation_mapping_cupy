@@ -539,7 +539,7 @@ class ElevationMap:
                 roll,
             )
 
-            if self.param.use_soil_property_estimation and FEE_em_params is not None:
+            if self.param.use_soil_property_estimation and surf_points_dict is not None:
                 # Now predict the soil properties
                 sample_len = self.dz.hparams['sample_len']
                 assert len(soil_nn_input['position']) == len(soil_nn_input['velocity']) == len(soil_nn_input['action'] == sample_len), "Lengths of position, velocity, and action must be the same"
