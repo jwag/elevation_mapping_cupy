@@ -561,7 +561,7 @@ class ElevationMap:
                 metadata['d_prime_prime'] = FEE_em_params['d_prime_prime']
 
                 # Now add the estimated soil properties to the semantic map
-                channels = ['c','phi'] # TODO Pull from model, but just testing now
+                channels = ['c','phi', 'dig_difficulty'] # TODO Pull from model, but just testing now
                 self.semantic_map.update_layers_GET(metadata, channels, surf_points_dict)
 
         # TODO: Possibly get rid of surf_points_dict and just return FEE_em_params once we get working with semantic map
