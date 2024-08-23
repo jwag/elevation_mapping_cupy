@@ -3,6 +3,9 @@ pointcloud_channel_fusions:
   rgb: 'color'                # 'color' fusion is used for the 'rgb' channel
   default: 'average'          # 'average' fusion is used for channels not listed here
 
+GET_channel_fusions:
+  default: 'latest'
+
 additional_layers: []
 
 #### Subscribers ########

@@ -28,6 +28,8 @@ class Parameter(Serializable):
                            (Default: ``[ "image_color", "image_exponential", "pointcloud_average", "pointcloud_bayesian_inference", "pointcloud_class_average", "pointcloud_class_bayesian", "pointcloud_class_max", "pointcloud_color", ]``)
         pointcloud_channel_fusions: The fusion for pointcloud channels.  
                                    (Default: ``{"rgb": "color", "default": "class_average"}``)
+        GET_channel_fusions: The fusion for GET channels.
+                            (Default: ``{"default": "latest"}``)
         image_channel_fusions: The fusion for image channels.  
                                (Default: ``{"rgb": "color", "default": "exponential"}``)
         data_type: The data type for the map.  
@@ -170,10 +172,12 @@ class Parameter(Serializable):
             "pointcloud_class_bayesian",
             "pointcloud_class_max",
             "pointcloud_color",
+            "GET_latest",
         ]
     )  # list of fusion algorithms
     pointcloud_channel_fusions: dict = field(default_factory=lambda: {"rgb": "color", "default": "class_average"})  # fusion for pointcloud channels
     image_channel_fusions: dict = field(default_factory=lambda: {"rgb": "color", "default": "exponential"})  # fusion for image channels
+    GET_channel_fusions: dict = field(default_factory=lambda: {"default": "latest"})  # fusion for GET channels
     data_type: str = np.float32  # data type for the map
     average_weight: float = 0.5  # weight for the average fusion
 

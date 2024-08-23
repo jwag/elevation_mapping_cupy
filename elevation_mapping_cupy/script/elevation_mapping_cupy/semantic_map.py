@@ -26,6 +26,7 @@ class SemanticMap:
 
         self.layer_specs_points = {}
         self.layer_specs_image = {}
+        self.layer_specs_GET = {}
         self.layer_names = []
         self.unique_fusion = []
         self.unique_data = []
@@ -54,12 +55,15 @@ class SemanticMap:
             if "pointcloud_class_bayesian" == fusion:
                 pcl_ids = self.get_layer_indices("class_bayesian", self.layer_specs_points)
                 self.delete_new_layers[pcl_ids] = 0
-            if "pointcloud_class_max" == fusion:
+            elif "pointcloud_class_max" == fusion:
                 pcl_ids = self.get_layer_indices("class_max", self.layer_specs_points)
                 self.delete_new_layers[pcl_ids] = 0
                 layer_cnt = self.param.fusion_algorithms.count("class_max")
                 id_max = cp.zeros((layer_cnt, self.param.cell_n, self.param.cell_n), dtype=cp.uint32,)
                 self.elements_to_shift["id_max"] = id_max
+            elif "GET_latest" == fusion:
+                GET_ids = self.get_layer_indices("latest", self.layer_specs_GET)
+                # self.delete_new_layers[GET_ids] = 0 # for latest we want to reset the new_map array to 0 so keep commented
             self.fusion_manager.register_plugin(fusion)
 
     def update_fusion_setting(self):
@@ -70,12 +74,15 @@ class SemanticMap:
             if "pointcloud_class_bayesian" == fusion:
                 pcl_ids = self.get_layer_indices("class_bayesian", self.layer_specs_points)
                 self.delete_new_layers[pcl_ids] = 0
-            if "pointcloud_class_max" == fusion:
+            elif "pointcloud_class_max" == fusion:
                 pcl_ids = self.get_layer_indices("class_max", self.layer_specs_points)
                 self.delete_new_layers[pcl_ids] = 0
                 layer_cnt = self.param.fusion_algorithms.count("class_max")
                 id_max = cp.zeros((layer_cnt, self.param.cell_n, self.param.cell_n), dtype=cp.uint32,)
                 self.elements_to_shift["id_max"] = id_max
+            elif "GET_latest" == fusion:
+                GET_ids = self.get_layer_indices("latest", self.layer_specs_GET)
+                # self.delete_new_layers[GET_ids] = 0 # for latest we want to reset the new_map array to 0 so keep commented
 
     def add_layer(self, name):
         """
@@ -141,7 +148,8 @@ class SemanticMap:
     def get_fusion(
         self, channels: List[str], channel_fusions: Dict[str, str], layer_specs: Dict[str, str]
     ) -> List[str]:
-        """Get all fusion algorithms that need to be applied to a specific pointcloud.
+        """Get all fusion algorithms that need to be applied to a specific input.
+            Modifies layer_specs in place to add the fusion algorith as a value for the channel key.
 
         Args:
             channels (List[str]):
@@ -257,6 +265,77 @@ class SemanticMap:
                 self.new_map,
                 self.elements_to_shift,
             )
+    
+    def update_layers_GET(self, FEE_params, channels, surf_points_dict):
+        """Update the semantic map with the pointcloud.
+
+        Args:
+            FEE_params: FEE parameters
+            channels: list of channel names (i.e. which FEE params to map, should be unique)
+            surf_points_dict: surface points dictionary
+        """
+        process_channels, fusion_methods = self.get_fusion(
+            channels, self.param.GET_channel_fusions, self.layer_specs_GET
+        )
+
+        # Resetting new_map for the layers that are to be deleted
+        self.new_map[self.delete_new_layers] = 0.0
+
+        # First compute the soil_wedge_inds and soil_wedge_weights as they are the same across properties
+        # Compute the maximum acceptable distance from the soil surface for a cell to be considered part of the soil wedge
+        x_t_max = FEE_params["d_prime_prime"] / (np.tan(FEE_params["alpha"] + FEE_params["beta"])- np.tan(FEE_params["alpha"]))
+        # TODO: Speed this up by doing this in parallel
+        # TODO: Switch this to xp for cupy compatibility after upgrading versions of cupy that will support unique axis argument
+        soil_wedge_inds = np.zeros((0,2), dtype=np.uint32)
+        soil_wedge_weights = np.zeros((0,), dtype=self.param.data_type)
+        for p, mi in zip(surf_points_dict["points"], surf_points_dict["map_inds"]):
+            valid_inds = p[:,1] < x_t_max
+            if valid_inds.any():
+                soil_wedge_inds = np.append(soil_wedge_inds, mi[valid_inds], axis=0)
+                # Normalize weights by the maximum distance from the blade
+                # Could also use depth instead of distance via d_w = d_prime_prime - x_t * (tan(alpha+beta) - tan(alpha))
+                # If normalizing though, these should be equivalent
+                soil_wedge_weights = xp.append(soil_wedge_weights, 1.0-p[valid_inds,1]/x_t_max, axis=0)
+        # make sure that the index is unique and take the highest weight
+        # TODO: Use cp.unique after upgrading to cupy
+        soil_wedge_inds_, idx, un_inv = np.unique(soil_wedge_inds, return_index=True, return_inverse=True, axis=0)
+        # Take the maximum weight for each unique index
+        # make array of true/false values for each unique index
+        # TODO: Speed this up by getting rid of for loop, but this should work
+        if len(idx) < soil_wedge_inds.shape[0]:
+            for i in range(len(soil_wedge_inds_)):
+                soil_wedge_weights[i] = cp.max(soil_wedge_weights[idx[i] == un_inv])
+            soil_wedge_inds = soil_wedge_inds_
+        else: # No duplicates # TODO: Comment out
+            debug=1
+        
+        # ensure that the soil_wedge_inds and weights are xp arrays
+        soil_wedge_inds = xp.array(soil_wedge_inds, dtype=xp.uint32)
+        soil_wedge_weights = xp.array(soil_wedge_weights, dtype=self.param.data_type)
+
+        # TODO: Get rid of this For loop and modify fusion algorithm to handle multiple channels simultaneously
+        for j, (fusion, channel) in enumerate(zip(fusion_methods, process_channels)):
+            # If channels has a new layer that is not in the semantic map, add it
+            if channel not in self.layer_names:
+                print(f"Layer {channel} not found, adding it to the semantic map")
+                self.add_layer(channel)
+            sem_map_idx = self.get_index(channel)
+            if sem_map_idx == -1:
+                print(f"Layer {channel} not found!")
+                return
+
+            # update the layers with the fusion algorithm
+                        # update the layers with the fusion algorithm
+            self.fusion_manager.execute_GET_plugin(
+                fusion,
+                cp.uint64(sem_map_idx),
+                FEE_params[channel],
+                soil_wedge_inds,
+                soil_wedge_weights,
+                self.semantic_map,
+                self.new_map,
+            )
+                # self.elements_to_shift, # Might need this if we want to shift the map, but I don't currently understand it
 
     def update_layers_image(
         self,

@@ -78,6 +78,18 @@ class FusionManager(object):
             )
         # else:
         #     raise ValueError("Plugin {} is not registered".format(name))
+    
+    def execute_GET_plugin(
+        self, name: str, sem_map_idx, FEE_param, soil_wedge_inds, soil_wedge_weights, semantic_map, new_map
+    ):
+        """
+        Execute a registered GET fusion plugin
+        """
+        idx = self.get_plugin_idx(name, "GET")
+        if idx is not None:
+            self.plugins[idx](sem_map_idx, FEE_param, soil_wedge_inds, soil_wedge_weights, semantic_map, new_map)
+        # else:
+        #     raise ValueError("Plugin {} is not registered".format(name))
 
     def execute_image_plugin(
         self,
