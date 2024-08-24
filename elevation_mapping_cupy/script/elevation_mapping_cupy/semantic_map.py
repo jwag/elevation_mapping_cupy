@@ -277,7 +277,7 @@ class SemanticMap:
                 self.elements_to_shift,
             )
     
-    def update_layers_GET(self, FEE_params, FEE_params_std, channels, surf_points_dict):
+    def update_layers_GET(self, FEE_params, FEE_params_var, channels, surf_points_dict):
         """Update the semantic map with the GET.
 
         Args:
@@ -347,16 +347,16 @@ class SemanticMap:
             # extract corresponding FEE parameter and conver to cp datatype....
             # param = xp.array(FEE_params[channel], dtype=self.param.data_type)
             param = self.param.data_type(FEE_params[channel].item())
-            if channel in FEE_params_std:
-                param_sigma = self.param.data_type(FEE_params_std[channel].item())
+            if channel in FEE_params_var:
+                param_var = self.param.data_type(FEE_params_var[channel].item())
             else:
-                param_sigma = 0.0
+                param_var = 0.0
             # update the layers with the fusion algorithm
             self.fusion_manager.execute_GET_plugin(
                 fusion,
                 cp.uint64(sem_map_idx),
                 param,
-                param_sigma,
+                param_var,
                 soil_wedge_weights,
                 soil_wedge_inds,
                 self.semantic_map,

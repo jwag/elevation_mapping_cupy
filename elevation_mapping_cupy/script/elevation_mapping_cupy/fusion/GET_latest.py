@@ -44,7 +44,7 @@ class Latest(FusionBase):
         self.latest_kernel = latest_kernel(width=self.cell_n, height=self.cell_n)
 
     # TODO: Resume here and compare to image fusion as it may line up better.
-    def __call__(self, sem_map_idx, FEE_param, FEE_param_sigma, soil_wedge_weights, soil_wedge_inds, semantic_map, new_map):
+    def __call__(self, sem_map_idx, FEE_param, FEE_param_var, soil_wedge_weights, soil_wedge_inds, semantic_map, new_map):
         self.latest_kernel(
             sem_map_idx,
             FEE_param,

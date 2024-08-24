@@ -7,7 +7,7 @@ from .fusion_manager import FusionBase
 
 def bayesian_inference_kernel(width, height, exp_weight_coeff):
     bayesian_inference_kernel = cp.ElementwiseKernel(
-        in_params="raw T sem_map_idx, raw F FEE_param, raw F FEE_param_sigma,  raw F soil_wedge_weights, raw T soil_wedge_inds_x, raw T soil_wedge_inds_y",
+        in_params="raw T sem_map_idx, raw F FEE_param, raw F FEE_param_var,  raw F soil_wedge_weights, raw T soil_wedge_inds_x, raw T soil_wedge_inds_y",
         out_params="raw U semantic_map, raw U new_map",
         preamble=string.Template(
             """
@@ -33,13 +33,13 @@ def bayesian_inference_kernel(width, height, exp_weight_coeff):
             U feat_ml = FEE_param;
             U feat_old = semantic_map[cell_idx];
             U sigma_old = new_map[cell_idx];
-            U sigma = FEE_param_sigma;
+            U sigma = FEE_param_var; // This is the variance of the FEE_param not the std deviation
             U sig_inflate = exp_weight(soil_wedge_weights[i]);
             // Apply the exponential weight to the sigma inflating it for low weights
             sigma = sigma * sig_inflate;
 
             // If the sigma_old is zero, then we have no prior information and should initialize the map
-            // with the FEE_param and FEE_param_sigma
+            // with the FEE_param and FEE_param_var
             // Or if the denominator for the Bayesian inference is zero, then we will also initialize the map
             // Otherwise, we have use Bayesian inference to update the map
             U feat_new = feat_ml;
@@ -71,11 +71,11 @@ class GET_bayesian_inference(FusionBase):
         self.bayesian_inference_kernel = bayesian_inference_kernel(width=self.cell_n, height=self.cell_n, exp_weight_coeff=self.exp_weight_coeff)
 
     # TODO: Resume here and compare to image fusion as it may line up better.
-    def __call__(self, sem_map_idx, FEE_param, FEE_param_sigma, soil_wedge_weights, soil_wedge_inds, semantic_map, new_map):
+    def __call__(self, sem_map_idx, FEE_param, FEE_param_var, soil_wedge_weights, soil_wedge_inds, semantic_map, new_map):
         self.bayesian_inference_kernel(
             sem_map_idx,
             FEE_param,
-            FEE_param_sigma,
+            FEE_param_var,
             soil_wedge_weights,
             soil_wedge_inds[:,0],
             soil_wedge_inds[:,1],
