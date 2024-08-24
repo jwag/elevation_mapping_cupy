@@ -52,37 +52,49 @@ class SemanticMap:
     def initialize_fusion(self):
         """Initialize the fusion algorithms."""
         for fusion in self.unique_fusion:
-            if "pointcloud_class_bayesian" == fusion:
-                pcl_ids = self.get_layer_indices("class_bayesian", self.layer_specs_points)
-                self.delete_new_layers[pcl_ids] = 0
-            elif "pointcloud_class_max" == fusion:
-                pcl_ids = self.get_layer_indices("class_max", self.layer_specs_points)
-                self.delete_new_layers[pcl_ids] = 0
-                layer_cnt = self.param.fusion_algorithms.count("class_max")
-                id_max = cp.zeros((layer_cnt, self.param.cell_n, self.param.cell_n), dtype=cp.uint32,)
-                self.elements_to_shift["id_max"] = id_max
-            elif "GET_latest" == fusion:
-                GET_ids = self.get_layer_indices("latest", self.layer_specs_GET)
-                # self.delete_new_layers[GET_ids] = 0 # for latest we want to reset the new_map array to 0 so keep commented
+            # if "pointcloud_class_bayesian" == fusion:
+            #     pcl_ids = self.get_layer_indices("class_bayesian", self.layer_specs_points)
+            #     self.delete_new_layers[pcl_ids] = 0
+            # elif "pointcloud_class_max" == fusion:
+            #     pcl_ids = self.get_layer_indices("class_max", self.layer_specs_points)
+            #     self.delete_new_layers[pcl_ids] = 0
+            #     layer_cnt = self.param.fusion_algorithms.count("class_max")
+            #     id_max = cp.zeros((layer_cnt, self.param.cell_n, self.param.cell_n), dtype=cp.uint32,)
+            #     self.elements_to_shift["id_max"] = id_max
+            # elif "GET_latest" == fusion:
+            #     GET_ids = self.get_layer_indices("latest", self.layer_specs_GET)
+            #     # self.delete_new_layers[GET_ids] = 0 # for latest we want to reset the new_map array to 0 so keep commented
+            # elif "GET_bayesian_inference" == fusion:
+            #     GET_ids = self.get_layer_indices("bayesian_inference", self.layer_specs_GET)
+            #     self.delete_new_layers[GET_ids] = 0
             self.fusion_manager.register_plugin(fusion)
 
-    def update_fusion_setting(self):
+    def update_fusion_setting(self, name):
         """
         Update the fusion settings.
         """
         for fusion in self.unique_fusion:
-            if "pointcloud_class_bayesian" == fusion:
+            if "pointcloud_class_bayesian" == fusion and name in self.layer_specs_points:
                 pcl_ids = self.get_layer_indices("class_bayesian", self.layer_specs_points)
-                self.delete_new_layers[pcl_ids] = 0
-            elif "pointcloud_class_max" == fusion:
+                if name in pcl_ids:
+                    # The new_layers is not being deleted because it is being used to store the uncertainty
+                    # This seems somewhat hacky. It would be better to have a separate layer in the semantic map for the uncertainty
+                    self.delete_new_layers[pcl_ids[name]] = 0
+            elif "pointcloud_class_max" == fusion and name in self.layer_specs_points:
                 pcl_ids = self.get_layer_indices("class_max", self.layer_specs_points)
-                self.delete_new_layers[pcl_ids] = 0
-                layer_cnt = self.param.fusion_algorithms.count("class_max")
-                id_max = cp.zeros((layer_cnt, self.param.cell_n, self.param.cell_n), dtype=cp.uint32,)
+                if name in pcl_ids:
+                    self.delete_new_layers[pcl_ids[name]] = 0
+                    layer_cnt = self.param.fusion_algorithms.count("class_max")
+                    id_max = cp.zeros((layer_cnt, self.param.cell_n, self.param.cell_n), dtype=cp.uint32,)
                 self.elements_to_shift["id_max"] = id_max
-            elif "GET_latest" == fusion:
+            elif "GET_latest" == fusion and name in self.layer_specs_GET:
                 GET_ids = self.get_layer_indices("latest", self.layer_specs_GET)
-                # self.delete_new_layers[GET_ids] = 0 # for latest we want to reset the new_map array to 0 so keep commented
+                # if name in GET_ids:
+                    # self.delete_new_layers[GET_ids[name]] = 0 # for latest we want to reset the new_map array to 0 so keep commented
+            elif "GET_bayesian_inference" == fusion and name in self.layer_specs_GET:
+                GET_ids = self.get_layer_indices("bayesian_inference", self.layer_specs_GET)
+                if name in GET_ids:
+                    self.delete_new_layers[GET_ids[name]] = 0
 
     def add_layer(self, name):
         """
@@ -102,6 +114,7 @@ class SemanticMap:
                 self.new_map, cp.zeros((1, self.param.cell_n, self.param.cell_n), dtype=self.param.data_type), axis=0,
             )
             self.delete_new_layers = cp.append(self.delete_new_layers, cp.array([1], dtype=cp.bool8))
+            self.update_fusion_setting(name)
 
     def pad_value(self, x, shift_value, idx=None, value=0.0):
         """Create a padding of the map along x,y-axis according to amount that has shifted.
@@ -167,7 +180,6 @@ class SemanticMap:
                             f"[WARNING] Layer {channel} not found in layer_specs. Using {default_fusion} algorithm as default."
                         )
                         layer_specs[channel] = default_fusion
-                        self.update_fusion_setting()
                     # If there's no default fusion algorithm, we skip this channel
                     else:
                         print(
@@ -176,7 +188,6 @@ class SemanticMap:
                         continue
                 else:
                     layer_specs[channel] = matched_fusion
-                    self.update_fusion_setting()
             x = layer_specs[channel]
             fusion_list.append(x)
             process_channels.append(channel)
@@ -196,12 +207,12 @@ class SemanticMap:
             fusion_alg(str): fusion algorithm name
 
         Returns:
-            cp.array: indices of the layers
+            layer_indicies (dict of cp.array): indices of the layers
         """
-        layer_indices = cp.array([], dtype=cp.int32)
+        layer_indices = {}
         for it, (key, val) in enumerate(layer_specs.items()):
             if val == fusion_alg: #TODO: Double check that this is correct
-                layer_indices = cp.append(layer_indices, it).astype(cp.int32)
+                layer_indices[key] = cp.array([it], dtype=cp.int32)
         return layer_indices
 
     def get_indices_fusion(self, pcl_channels: List[str], fusion_alg: str, layer_specs: Dict[str, str]):
@@ -266,11 +277,12 @@ class SemanticMap:
                 self.elements_to_shift,
             )
     
-    def update_layers_GET(self, FEE_params, channels, surf_points_dict):
-        """Update the semantic map with the pointcloud.
+    def update_layers_GET(self, FEE_params, FEE_params_std, channels, surf_points_dict):
+        """Update the semantic map with the GET.
 
         Args:
             FEE_params: FEE parameters
+            FEE_params_std: FEE parameters standard deviation
             channels: list of channel names (i.e. which FEE params to map, should be unique)
             surf_points_dict: surface points dictionary
         """
@@ -278,8 +290,14 @@ class SemanticMap:
             channels, self.param.GET_channel_fusions, self.layer_specs_GET
         )
 
+        # If channels has a new layer that is not in the semantic map, add it
+        for channel in process_channels:
+            if channel not in self.layer_names:
+                print(f"Layer {channel} not found, adding it to the semantic map")
+                self.add_layer(channel)
+
         # Resetting new_map for the layers that are to be deleted
-        # self.new_map[self.delete_new_layers] = 0.0
+        self.new_map[self.delete_new_layers] = 0.0
 
         # First compute the soil_wedge_inds and soil_wedge_weights as they are the same across properties
         # Compute the maximum acceptable distance from the soil surface for a cell to be considered part of the soil wedge
@@ -296,6 +314,9 @@ class SemanticMap:
                 # Could also use depth instead of distance via d_w = d_prime_prime - x_t * (tan(alpha+beta) - tan(alpha))
                 # If normalizing though, these should be equivalent
                 soil_wedge_weights = xp.append(soil_wedge_weights, 1.0-p[valid_inds,0]/x_t_max, axis=0)
+        if soil_wedge_inds.shape[0] == 0:
+            print("No valid soil wedge points found")
+            return
         # make sure that the index is unique and take the highest weight
         # TODO: Use cp.unique after upgrading to cupy
         # soil_wedge_inds_, idx, un_inv = np.unique(soil_wedge_inds, return_index=True, return_inverse=True, axis=0)
@@ -318,10 +339,6 @@ class SemanticMap:
 
         # TODO: Get rid of this For loop and modify fusion algorithm to handle multiple channels simultaneously
         for j, (fusion, channel) in enumerate(zip(fusion_methods, process_channels)):
-            # If channels has a new layer that is not in the semantic map, add it
-            if channel not in self.layer_names:
-                print(f"Layer {channel} not found, adding it to the semantic map")
-                self.add_layer(channel)
             sem_map_idx = self.get_index(channel)
             if sem_map_idx == -1:
                 print(f"Layer {channel} not found!")
@@ -330,14 +347,20 @@ class SemanticMap:
             # extract corresponding FEE parameter and conver to cp datatype....
             # param = xp.array(FEE_params[channel], dtype=self.param.data_type)
             param = self.param.data_type(FEE_params[channel].item())
+            if channel in FEE_params_std:
+                param_sigma = self.param.data_type(FEE_params_std[channel].item())
+            else:
+                param_sigma = 0.0
             # update the layers with the fusion algorithm
             self.fusion_manager.execute_GET_plugin(
                 fusion,
                 cp.uint64(sem_map_idx),
                 param,
-                soil_wedge_inds,
+                param_sigma,
                 soil_wedge_weights,
+                soil_wedge_inds,
                 self.semantic_map,
+                self.new_map, # NOTE: In reality hold std deviation of the layer
             )
                 # self.elements_to_shift, # Might need this if we want to shift the map, but I don't currently understand it
             debug=1

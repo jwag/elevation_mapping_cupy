@@ -94,6 +94,7 @@ Next Steps:
 * R and t provided to input_pointcloud() and subsequently update_map_with_kernel() are the rotation matrix and translation vector representing $T_{ws}(R,t)$ i.e. the transform from the world frame to the sensor frame. In update_map_with_kernel() t is modifed using the function shift_translation_to_map_center(). What this effectively does is make it so that the old R and the new t represent the transform $T_{ms}=T_{mw} T_{ws} = T_{wm}^{-1}T_{ws}$ where $T_{wm}$ is the transfrom from the world to map frame cosisting purely of a translation. The rotation component of $T_{ws}$ is equavlent to the rotation component of $T_{ms}$ because the map frame $\{m\}$ is aligned with the world frame $\{w\}$ by construction. The point coordinates in the map frame can therefore be provided by $p_m = T_{ms} p_s$ which is implemneted in the add_points_kernel().
 * The time layer doesn't get used for time based variance but is instead only used in the visibility cleanup step
 * In original elevation_mapping package is this [product of transforms](https://github.com/ANYbotics/elevation_mapping/blob/82aa8a566a62e9cb9c4013c13b6fa3591ce755ec/elevation_mapping/src/sensor_processors/StructuredLightSensorProcessor.cpp#L58) an error? I don't think so, just different syntax. look at how CBM is defined.
+* The new_layers in the semantic_map is being used to store the uncertainty for bayesian fusion. This seems somewhat hacky. It would be better to have a separate layer in the semantic map for the uncertainty
 
 
 ## References

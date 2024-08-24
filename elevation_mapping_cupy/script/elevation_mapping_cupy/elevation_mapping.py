@@ -555,14 +555,14 @@ class ElevationMap:
                 soil_nn_input['metadata'] = {}
                 dataset = self.dz.deploy_dataset([soil_nn_input])
                 dataloader = self.dz.deploy_dataloader(dataset)
-                metadata = self.dz.deploy_step(next(iter(dataloader)))
+                FEE_params, FEE_params_stds = self.dz.deploy_step(next(iter(dataloader)))
                 # print(metadata)
                 # Add d_prime_prime to metadata
-                metadata['d_prime_prime'] = FEE_em_params['d_prime_prime']
+                FEE_params['d_prime_prime'] = FEE_em_params['d_prime_prime']
 
                 # Now add the estimated soil properties to the semantic map
                 channels = ['c','phi', 'dig_difficulty'] # TODO Pull from model, but just testing now
-                self.semantic_map.update_layers_GET(metadata, channels, surf_points_dict)
+                self.semantic_map.update_layers_GET(FEE_params, FEE_params_stds, channels, surf_points_dict)
 
         # TODO: Possibly get rid of surf_points_dict and just return FEE_em_params once we get working with semantic map
         return FEE_em_params, surf_points_dict

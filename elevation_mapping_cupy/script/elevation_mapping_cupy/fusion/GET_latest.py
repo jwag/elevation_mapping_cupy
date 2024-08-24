@@ -7,7 +7,7 @@ from .fusion_manager import FusionBase
 
 def latest_kernel(width, height):
     latest_kernel = cp.ElementwiseKernel(
-        in_params="raw T sem_map_idx, raw F FEE_param, raw T soil_wedge_inds_x, raw T soil_wedge_inds_y, raw F soil_wedge_weights",
+        in_params="raw T sem_map_idx, raw U FEE_param, raw T soil_wedge_inds_x, raw T soil_wedge_inds_y",
         out_params="raw U semantic_map",
         preamble=string.Template(
             """
@@ -21,7 +21,7 @@ def latest_kernel(width, height):
         ).substitute(width=width, height=height),
         operation=
             """
-            // i here corresponds to the first index of the soil_wedge_inds and soil_wedge_weights arrays
+            // i here corresponds to the first index of the soil_wedge_inds array
             // Must extract index for soil_wedge_inds as cupy serializes the array
             int x_idx = soil_wedge_inds_x[i];
             int y_idx = soil_wedge_inds_y[i];
@@ -44,13 +44,12 @@ class Latest(FusionBase):
         self.latest_kernel = latest_kernel(width=self.cell_n, height=self.cell_n)
 
     # TODO: Resume here and compare to image fusion as it may line up better.
-    def __call__(self, sem_map_idx, FEE_param, soil_wedge_inds, soil_wedge_weights, semantic_map):
+    def __call__(self, sem_map_idx, FEE_param, FEE_param_sigma, soil_wedge_weights, soil_wedge_inds, semantic_map, new_map):
         self.latest_kernel(
             sem_map_idx,
             FEE_param,
             soil_wedge_inds[:,0],
             soil_wedge_inds[:,1],
-            soil_wedge_weights,
             semantic_map,
             size=int(soil_wedge_inds.shape[0]),
         )

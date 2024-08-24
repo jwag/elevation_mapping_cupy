@@ -140,6 +140,8 @@ class Parameter(Serializable):
                     (Default: ``False``)
         soil_prop_est_net_checkpoint_path: Path to the soil property estimation network checkpoint.
                     (Default: ``None``)
+        bayesian_soil_wedge_exp_weight_coeff: The coefficient for the exponential weight in the Bayesian inference for the soil wedge.
+                    (Default: ``1.0``)
         
     """
     resolution: float = 0.04  # resolution in m.
@@ -173,6 +175,7 @@ class Parameter(Serializable):
             "pointcloud_class_max",
             "pointcloud_color",
             "GET_latest",
+            "GET_bayesian_inference",
         ]
     )  # list of fusion algorithms
     pointcloud_channel_fusions: dict = field(default_factory=lambda: {"rgb": "color", "default": "class_average"})  # fusion for pointcloud channels
@@ -241,6 +244,7 @@ class Parameter(Serializable):
 
     use_soil_property_estimation: bool = False  # use soil property estimation network
     soil_prop_est_net_checkpoint_path: str = None  # path to the soil property estimation network checkpoint
+    bayesian_soil_wedge_exp_weight_coeff: float = 1.0  # the coefficient for the exponential weight in the Bayesian inference for the soil wedge
 
     # # not configurable params
     true_map_length: float = None  # true length of the map
