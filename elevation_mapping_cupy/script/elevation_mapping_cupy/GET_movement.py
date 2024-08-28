@@ -1250,7 +1250,7 @@ class GETMovement:
         if np.sum(valid) == 0:
             # Can be caused by an unitialized height map, or only intersections with loose soil
             # warnings.warn("No valid surface points found for FEE")
-            return None
+            return None, None
         # Only use valid surface points in FEE calc
         surf_points = [surf_point for surf_point, is_valid in zip(surf_points, valid) if is_valid]
         surf_points_inds = [surf_point_ind for surf_point_ind, is_valid in zip(surf_points_inds, valid) if is_valid]

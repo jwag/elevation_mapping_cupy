@@ -191,7 +191,7 @@ def surf_elev_map_plot(elev, layer_color, layer_color_name, cell_n, resolution, 
    ax.set_box_aspect([xrange, yrange, z_scale*zrange])
 
 # TODO: Add plot to show loose soil on top of the elevation map
-def bar_elev_map_plot(elev, layer_color, layer_color_name, cell_n, resolution, offset, colormap='Spectral', scale_mode="z_fit", layer_color_min=None, layer_truth_str=None):
+def bar_elev_map_plot(elev, layer_color, layer_color_name, true_cell_n, resolution, offset, colormap='Spectral', scale_mode="z_fit", layer_color_min=None, layer_truth_str=None):
       """
       Plot a 3D bar plot of the elevation map. Colors are determined by the layer_color map
       which could be variance, or some other value. This plot is not interpolated and shows the
@@ -215,8 +215,15 @@ def bar_elev_map_plot(elev, layer_color, layer_color_name, cell_n, resolution, o
       minz = np.nanmin(elev)
       bottom = np.ones_like(elev) * minz
       dz = elev.copy() - minz
-      x = np.arange(cell_n)*resolution + offset[0] - resolution/2
-      y = np.arange(cell_n )*resolution + offset[1] - resolution/2
+
+      # This is the center index of the map accounting for rounding taking place in get_x_idx() and get_y_idx()
+      # This is necessary because for odd numbers of cells the center of the map
+      # is at the edge of a cell, but for even numbers of cells the center is in the middle of a cell
+      # This is a result of the way the get_x_idx() and get_y_idx() functions are implemented
+      center_ind_float = (true_cell_n)/2.0 # Not the map center but the center index of the map
+      # Offset here is the actual xy coordinates of the map center
+      x = (np.arange(true_cell_n)  - center_ind_float)*resolution + offset[0]
+      y = (np.arange(true_cell_n) - center_ind_float)*resolution + offset[1]
       x, y = np.meshgrid(x, y, indexing='ij')
 
       # Set values that are nan in the elevation map to be nan in the layer_color map
@@ -270,18 +277,19 @@ def bar_elev_map_plot(elev, layer_color, layer_color_name, cell_n, resolution, o
 
 if __name__ == '__main__':
    # Generate Test Map
-   cell_n = 5
+   cell_n = 4
    resolution = .1
    offset = np.zeros(2)
    elev = np.zeros((cell_n, cell_n))
    elev[0,0] = 1.0
-   elev[1,0] = 0.5
-   elev[0,1] = 0.5
-   elev[1,1] = np.nan
-   elev[2,1] = 1.5
-   elev[1,2] = 2.5
-   elev[2,2] = 3.0
-   elev[3:,:] = np.nan
+   # elev[0,0] = 1.0
+   # elev[1,0] = 0.5
+   # elev[0,1] = 0.5
+   # elev[1,1] = np.nan
+   # elev[2,1] = 1.5
+   # elev[1,2] = 2.5
+   # elev[2,2] = 3.0
+   # elev[3:,:] = np.nan
    # elev[:,3] = np.nan
    # Original xy coordinates
    elev *= resolution
@@ -290,8 +298,8 @@ if __name__ == '__main__':
    scale_mode = "equal"
    layer_color_name = "Elevation"
    bar_elev_map_plot(elev, elev, layer_color_name, cell_n, resolution, offset, scale_mode=scale_mode)
-   surf_elev_map_plot(elev, elev, layer_color_name, cell_n, resolution, offset, scale_mode=scale_mode)
-   surf_elev_map_plot_pretty(elev, elev, layer_color_name, cell_n, resolution, offset, scale_mode=scale_mode)
+   # surf_elev_map_plot(elev, elev, layer_color_name, cell_n, resolution, offset, scale_mode=scale_mode)
+   # surf_elev_map_plot_pretty(elev, elev, layer_color_name, cell_n, resolution, offset, scale_mode=scale_mode)
    plt.show()
    debug = 1
 

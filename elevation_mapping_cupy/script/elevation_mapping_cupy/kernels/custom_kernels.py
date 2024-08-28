@@ -317,10 +317,12 @@ def error_counting_kernel(
             U rx = p[i * 3];
             U ry = p[i * 3 + 1];
             U rz = p[i * 3 + 2];
+            // Takes the point that is in sensor frame and transforms it to the map origin frame
             U x = transform_p(rx, ry, rz, R[0], R[1], R[2], t[0]);
             U y = transform_p(rx, ry, rz, R[3], R[4], R[5], t[1]);
             U z = transform_p(rx, ry, rz, R[6], R[7], R[8], t[2]);
             // if (!is_valid(z, t[2])) {return;}
+            // Checks if the point is in the excluded region (see Fig. 3 in the GPU mapping paper)
             if (!is_valid(x, y, z, t[0], t[1], t[2])) {return;}
             // if ((x - t[0]) * (x - t[0]) + (y - t[1]) * (y - t[1]) + (z - t[2]) * (z - t[2]) < 0.5) {return;}
             int idx = get_idx(x, y, center_x[0], center_y[0]);

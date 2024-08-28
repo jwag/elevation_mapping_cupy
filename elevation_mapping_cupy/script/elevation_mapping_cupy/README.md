@@ -74,7 +74,7 @@ Next Steps:
 
 * Figure out this whole transform issue where initial mesh is translated and rotated...
 * The side of the starting surface that a cell falling within the intersected volume is determines the side of the ending surface that the material should be moved to. if on the positive side of start surface and intersected then will end up on the positive side of the second surface (assuming normals are not flipped to show outward normal for display of mesh)
-
+* speed up EM by disabling traversability
 
 ## Questions
 * The z noise function that is used to determine the appropriate level of noise for a point seems wrong. Why would it have the error be related to the z axis coordinate of the point cloud. It should be based on the range if anything. used in error_counting_kernel and add_points_kernel
@@ -95,6 +95,8 @@ Next Steps:
 * The time layer doesn't get used for time based variance but is instead only used in the visibility cleanup step
 * In original elevation_mapping package is this [product of transforms](https://github.com/ANYbotics/elevation_mapping/blob/82aa8a566a62e9cb9c4013c13b6fa3591ce755ec/elevation_mapping/src/sensor_processors/StructuredLightSensorProcessor.cpp#L58) an error? I don't think so, just different syntax. look at how CBM is defined.
 * The new_layers in the semantic_map is being used to store the uncertainty for bayesian fusion. This seems somewhat hacky. It would be better to have a separate layer in the semantic map for the uncertainty
+* The indexing used internal to Elevation Mapping CUPY are a bit tricky. In parameters.py you can see that they add a 1 cell border around the entire map, i.e. making cell_n 2 bigger than requested. I have not completely determined the reason for this, but it affects the indexing.
+* The functions utility get_x_idx and get_y_idx in the custom_kernels.py cast a floating point into an int. My understanding is that this is fundamentally a floor operation if the values are positive. So in the case of cell_n being odd e.g. 7 (with true_cell_n=5) then the index corresponding to the center of the grid map is int(0.5 * 7) = 3. and for an even number of cells e.g. cell_n=6 (true_cell_n =4) then the center of the grid map is at index int(.5*6) = 3. However, for the odd case the metric coordinate (0,0) is at the center of the cell at index (3,3) as opposed to the even case where the (0,0) metric coordinate is at the bottom left corner of the (3,3) cell of the map. 
 
 
 ## References
