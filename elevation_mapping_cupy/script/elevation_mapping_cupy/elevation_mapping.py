@@ -886,6 +886,8 @@ class ElevationMap:
                 m = self.normal_map.copy()[2, 1:-1, 1:-1]
             elif name in self.semantic_map.layer_names:
                 m = self.semantic_map.get_map_with_name(name)
+            elif name in self.semantic_map.var_layer_names:
+                m = self.semantic_map.get_var_map_with_name(name)
             elif name in self.plugin_manager.layer_names:
                 self.plugin_manager.update_with_name(
                     name,

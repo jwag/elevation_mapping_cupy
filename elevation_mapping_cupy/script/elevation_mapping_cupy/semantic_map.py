@@ -43,6 +43,7 @@ class SemanticMap:
         # which layers should be reset to zero at each update, per default everyone,
         # if a layer should not be reset, it is defined in compile_kernels function
         self.delete_new_layers = cp.ones(self.new_map.shape[0], cp.bool8)
+        self.var_layer_names = [] # List of layer names for which self.new_map is the variance for that layer 
         self.fusion_manager = FusionManager(self.param)
 
     def clear(self):
@@ -80,10 +81,12 @@ class SemanticMap:
                     # The new_layers is not being deleted because it is being used to store the uncertainty
                     # This seems somewhat hacky. It would be better to have a separate layer in the semantic map for the uncertainty
                     self.delete_new_layers[pcl_ids[name]] = 0
+                    self.var_layer_names.append(name+ "_var")
             elif "pointcloud_class_max" == fusion and name in self.layer_specs_points:
                 pcl_ids = self.get_layer_indices("class_max", self.layer_specs_points)
                 if name in pcl_ids:
                     self.delete_new_layers[pcl_ids[name]] = 0
+                    # self.var_layer_names.append(name+ "_var") # Don't know how to handle this yet
                     layer_cnt = self.param.fusion_algorithms.count("class_max")
                     id_max = cp.zeros((layer_cnt, self.param.cell_n, self.param.cell_n), dtype=cp.uint32,)
                 self.elements_to_shift["id_max"] = id_max
@@ -95,6 +98,7 @@ class SemanticMap:
                 GET_ids = self.get_layer_indices("bayesian_inference", self.layer_specs_GET)
                 if name in GET_ids:
                     self.delete_new_layers[GET_ids[name]] = 0
+                    self.var_layer_names.append(name+ "_var")
 
     def add_layer(self, name):
         """
@@ -458,6 +462,25 @@ class SemanticMap:
         else:
             m = self.get_semantic(name)
             return m
+        
+    def get_var_map_with_name(self, var_name):
+        """Return the variance map with the given name.
+        Args:
+            var_name: name of layer for which we want the variance map + "_var"
+                      e.g. "c_var" for the variance of the "c" layer
+
+        Returns:
+            cp.array: map
+        """
+        name = var_name[:-4]
+        # If the layer is a color layer, return the rgb map
+        if name in self.layer_specs_points and self.layer_specs_points[name] == "color":
+            raise NotImplementedError("Variance for color layers not implemented")
+        elif name in self.layer_specs_image and self.layer_specs_image[name] == "color":
+            raise NotImplementedError("Variance for color layers not implemented")
+        else:
+            m = self.get_semantic(name, is_var=True)
+            return m
 
     def get_rgb(self, name):
         """Return the rgb map with the given name.
@@ -473,17 +496,22 @@ class SemanticMap:
         c = c.astype(np.float32)
         return c
 
-    def get_semantic(self, name):
+    def get_semantic(self, name, is_var=False):
         """Return the semantic map layer with the given name.
 
         Args:
             name(str): layer name
+            is_var(bool): whether to return the variance map
 
         Returns:
             cp.array: semantic map layer
         """
         idx = self.layer_names.index(name)
-        c = self.process_map_for_publish(self.semantic_map[idx])
+        if is_var:
+            m = self.new_map[idx]
+        else:
+            m = self.semantic_map[idx]
+        c = self.process_map_for_publish(m)
         return c
 
     def process_map_for_publish(self, input_map):
