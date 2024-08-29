@@ -17,6 +17,20 @@ smooth_filter:
   layer_name: "smooth"
   extra_params:
     input_layer_name: "min_filter"
+fee_index:
+  enable: True
+  fill_nan: False
+  is_height_layer: False
+  layer_name: "FEE_index"
+  extra_params:
+    Q: 0.0
+    d: 0.2
+    w: 3.164
+    alpha: 0.0
+    rho: 1.39626
+    vx: 1.0
+    vz: 0.0
+    s_q: 1.0
 # Commenting Out OpenCV functionality for now
 # # Apply inpainting using opencv
 # inpainting:

@@ -561,9 +561,20 @@ class ElevationMap:
                 FEE_params['d_prime_prime'] = FEE_em_params['d_prime_prime']
 
                 # Now add the estimated soil properties to the semantic map
-                channels = ['c','phi', 'dig_difficulty'] # TODO Pull from model, but just testing now
-                self.semantic_map.update_layers_GET(FEE_params, FEE_params_var, channels, surf_points_dict)
+                channels = ['c', 'phi', 'gamma', 'delta', 'c_a']
+                soil_wedge_inds = self.semantic_map.update_layers_GET(FEE_params, FEE_params_var, channels, surf_points_dict)
 
+                # Trigger FEE Plugin processing
+                if False: # Disable for now as this is time consuming
+                    self.plugin_manager.update_with_name("FEE_index",
+                                                        self.elevation_map,
+                                                        self.layer_names,
+                                                        semantic_map=self.semantic_map.semantic_map,
+                                                        semantic_params=self.semantic_map.layer_names,
+                                                        semantic_new_map=self.semantic_map.new_map,
+                                                        semantic_var_params=self.semantic_map.var_layer_names,
+                                                        updated_inds=soil_wedge_inds,
+                                                        )
         # TODO: Possibly get rid of surf_points_dict and just return FEE_em_params once we get working with semantic map
         return FEE_em_params, surf_points_dict
     
@@ -847,6 +858,8 @@ class ElevationMap:
             return True
         elif name in self.semantic_map.layer_names:
             return True
+        elif name in self.semantic_map.var_layer_names:
+            return True
         elif name in self.plugin_manager.layer_names:
             return True
         else:
@@ -893,10 +906,13 @@ class ElevationMap:
                     name,
                     self.elevation_map,
                     self.layer_names,
-                    self.semantic_map.semantic_map,
-                    self.semantic_map.layer_names,
-                    self.base_rotation,
-                    self.semantic_map.elements_to_shift,
+                    semantic_map=self.semantic_map.semantic_map,
+                    semantic_params=self.semantic_map.layer_names,
+                    rotation=self.base_rotation,
+                    elements_to_shift=self.semantic_map.elements_to_shift,
+                    semantic_new_map=self.semantic_map.new_map,
+                    semantic_var_params=self.semantic_map.var_layer_names,
+                    updated_inds=None, # Use internal logic to determine which indices to update
                 )
                 m = self.plugin_manager.get_map_with_name(name)
                 p = self.plugin_manager.get_param_with_name(name)

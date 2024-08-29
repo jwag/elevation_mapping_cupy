@@ -187,9 +187,14 @@ class PluginManager(object):
         semantic_params=None,
         rotation=None,
         elements_to_shift={},
+        semantic_new_map=None,
+        semantic_var_params=None,
+        updated_inds=None,
     ):
         idx = self.get_layer_index_with_name(name)
         if idx is not None and idx < len(self.plugins):
+            # TODO: This is not a good way of differentiating between what function to call.
+            # Either make the function signature the same or use a different method to differentiate like requiring a interface type to be specified in the class.
             n_param = len(signature(self.plugins[idx]).parameters)
             if n_param == 5:
                 self.layers[idx] = self.plugins[idx](elevation_map, layer_names, self.layers, self.layer_names)
@@ -212,7 +217,7 @@ class PluginManager(object):
                     semantic_params,
                     rotation,
                 )
-            else:
+            elif n_param == 9:
                 self.layers[idx] = self.plugins[idx](
                     elevation_map,
                     layer_names,
@@ -222,6 +227,18 @@ class PluginManager(object):
                     semantic_params,
                     rotation,
                     elements_to_shift,
+                )
+            elif n_param == 10: # FEE_index plugin
+                self.layers[idx] = self.plugins[idx](
+                    elevation_map,
+                    layer_names,
+                    self.layers,
+                    self.layer_names,
+                    semantic_map,
+                    semantic_params,
+                    semantic_new_map,
+                    semantic_var_params,
+                    updated_inds,
                 )
 
     def get_map_with_name(self, name: str) -> cp.ndarray:

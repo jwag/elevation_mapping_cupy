@@ -289,6 +289,8 @@ class SemanticMap:
             FEE_params_std: FEE parameters standard deviation
             channels: list of channel names (i.e. which FEE params to map, should be unique)
             surf_points_dict: surface points dictionary
+        Returns:
+            cp.array: soil_wedge_inds (indices of the map for the FEE soil wedge)
         """
         process_channels, fusion_methods = self.get_fusion(
             channels, self.param.GET_channel_fusions, self.layer_specs_GET
@@ -374,7 +376,11 @@ class SemanticMap:
             )
                 # self.elements_to_shift, # Might need this if we want to shift the map, but I don't currently understand it
             debug=1
-
+            # Return the inds where updates were made so that the FEEIndex plugin can update the fee_index layer
+            # at these inds only to save compute given it isn't GPU accelerated yet.
+            # TODO: Resume HERE!!! The call function shouldn't have to have this and should only apply to inds where map is valid and params aren't 0.0.
+        return soil_wedge_inds
+    
     def update_layers_image(
         self,
         # sub_key: str,
