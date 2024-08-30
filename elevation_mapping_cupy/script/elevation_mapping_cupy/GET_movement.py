@@ -1191,7 +1191,7 @@ class GETMovement:
                 x = x + dx
                 y = y + dy
                 if (x < 0 or x >= cell_n or y < 0 or y >= cell_n):
-                    raise ValueError("Surface points outside of map bounds")
+                    warnings.warn("Surface points outside of map bounds. Stopping line trace.")
                     break
             # Check if more than 1 surface point was found, i.e. a point beyond the intsection point
             if surf_points[i].shape[0] <= 1 and valid[i]:
@@ -1301,6 +1301,9 @@ class GETMovement:
         d_valid = d_hat >= 0
         if np.any(~d_valid):
             warnings.warn("Negative depth of cut found in FEE calculation. Excluding from average. Consider reducing sweep distance.")
+            if np.all(~d_valid):
+                warnings.warn("All depth of cuts are negative. Returning None.")
+                return None, None
             d_hat = d_hat[d_valid]
             alpha_hat = alpha_hat[d_valid]
             rho_hat = rho_hat[d_valid]
@@ -1575,7 +1578,7 @@ class GETMovement:
         # Transform the blade position to the blade depth calculation frame
         O_r_OG = np.concatenate((O_r_OG, np.ones((n,1), dtype=self.data_type)), axis=1)
         D_r_DG = (params['T_OD']@O_r_OG.T).T
-        d_prime = D_r_DG[:,2] - params['dist_to_ground']
+        d_prime = -D_r_DG[:,2] - params['dist_to_ground']
         return d_prime
     
     def get_blade_depth(self ,M_r_MG, vel_xy, map_center):
@@ -1670,8 +1673,10 @@ class GETMovement:
             # Check to see if we are likely to have an intersection by comparing the max_z of the submap and the min_z of the swept volume bounding box
             min_em_z = self.xp.min(submap[0, valid_cells])
             max_em_z = self.xp.max(submap[0, valid_cells])
+            max_compact_em_z = self.xp.max(submap[0, valid_cells] - submap[7, valid_cells])
             dist_to_ground = min_sv_z - max_em_z
-            self.ground_proj_params = self.set_blade_ground_dist_calc_params(dist_to_ground.get(), GET_plane_origin, translation)
+            dist_to_ground_compact = min_sv_z - max_compact_em_z
+            self.ground_proj_params = self.set_blade_ground_dist_calc_params(dist_to_ground_compact.get(), GET_plane_origin, translation)
             if dist_to_ground > 0:
                 # print("No intersection with swept volume")
                 # TODO: We could also update the variance of the cells that are not intersected,

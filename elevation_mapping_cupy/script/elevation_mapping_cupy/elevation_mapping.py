@@ -545,6 +545,10 @@ class ElevationMap:
                 assert len(soil_nn_input['position']) == len(soil_nn_input['velocity']) == len(soil_nn_input['action'] == sample_len), "Lengths of position, velocity, and action must be the same"
                 # Add the FEE parameters
                 em_metadata = copy.deepcopy(FEE_em_params) # TODO: Do we need to copy here?
+                # Override Q for no particles. TODO: Remove later
+                NO_PARTICLES = False
+                if NO_PARTICLES:
+                    em_metadata['Q'] *= 0.0
                 # Offset the step to match the sample length (the params should correspond to the end of the sample)
                 # These two should beare equivalent
                 # sweep_start_step = sample_len - em_metadata['d_step'][-1] - 1

@@ -314,6 +314,8 @@ class SemanticMap:
         soil_wedge_weights = np.zeros((0,), dtype=self.param.data_type)
         for p, mi in zip(surf_points_dict["points"], surf_points_dict["map_inds"]):
             valid_inds = p[:,0] < x_t_max
+            # Ensure all points that are within the minimum distance are included as valid
+            valid_inds = valid_inds | (p[:,0] < self.param.min_soil_prop_marking_dist)
             # Make sure that first set of inds in the list is always valid as it is an intersected cell
             valid_inds[0] = True
             soil_wedge_inds = np.append(soil_wedge_inds, mi[valid_inds], axis=0)
@@ -322,7 +324,7 @@ class SemanticMap:
             # If normalizing though, these should be equivalent
             weights = 1.0-p[valid_inds,0]/x_t_max
             # Ensure that the weights are between 0 and 1
-            weights = np.clip(weights, 0.0, 1.0)
+            weights = np.clip(weights, 0.0, 1.0) # TODO: Consider removing lower limit
             # Make the first weight 1.0 as it is the intersected cell
             weights[0] = 1.0
             soil_wedge_weights = xp.append(soil_wedge_weights, weights, axis=0)

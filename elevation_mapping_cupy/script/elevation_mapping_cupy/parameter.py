@@ -142,7 +142,8 @@ class Parameter(Serializable):
                     (Default: ``None``)
         bayesian_soil_wedge_exp_weight_coeff: The coefficient for the exponential weight in the Bayesian inference for the soil wedge.
                     (Default: ``1.0``)
-        
+        min_soil_prop_marking_dist: # All points less than this distance from the blade are marked with the soil properties estimated by the network.
+                    (Default: ``0.3``)
     """
     resolution: float = 0.04  # resolution in m.
     subscriber_cfg: dict = field(
@@ -245,7 +246,7 @@ class Parameter(Serializable):
     use_soil_property_estimation: bool = False  # use soil property estimation network
     soil_prop_est_net_checkpoint_path: str = None  # path to the soil property estimation network checkpoint
     bayesian_soil_wedge_exp_weight_coeff: float = 1.0  # the coefficient for the exponential weight in the Bayesian inference for the soil wedge
-
+    min_soil_prop_marking_dist: float = 0.3  # minimum distance for marking soil properties
     # # not configurable params
     true_map_length: float = None  # true length of the map
     cell_n: int = None  # number of cells in the map

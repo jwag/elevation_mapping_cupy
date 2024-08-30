@@ -60,6 +60,7 @@ use_chainer: false                              # Use chainer as a backend of tr
 use_soil_property_estimation: true             # Use soil property estimation or not., i.e. run the soil property estimation network and add the estimated soil properties to the map.
 soil_prop_est_net_checkpoint_path: './lightning_logs/Elevation-Mapping1-phys_inf/lightning_logs/version_42/checkpoints/last.ckpt' # Path to the checkpoint of the soil property estimation network.
 bayesian_soil_wedge_exp_weight_coeff: 1.0       # Coefficient for the exponential weight function used for the soil property estimation. w = exp(-coeff * (x_s-1)), where x_s is the normalized wedge depth.
+min_soil_prop_marking_dist: 0.3                # All points less than this distance from the blade are marked with the soil properties estimated by the network.
 
 #### Upper bound ########
 use_only_above_for_upper_bound: false
