@@ -565,7 +565,7 @@ class ElevationMap:
                 FEE_params['d_prime_prime'] = FEE_em_params['d_prime_prime']
 
                 # Now add the estimated soil properties to the semantic map
-                channels = ['c', 'phi', 'gamma', 'delta', 'c_a']
+                channels = ['c', 'phi', 'gamma', 'delta', 'c_a', 'd'] # TODO: Should this be d_prime?
                 soil_wedge_inds = self.semantic_map.update_layers_GET(FEE_params, FEE_params_var, channels, surf_points_dict)
 
                 # Trigger FEE Plugin processing

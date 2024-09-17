@@ -360,7 +360,12 @@ class SemanticMap:
 
             # extract corresponding FEE parameter and conver to cp datatype....
             # param = xp.array(FEE_params[channel], dtype=self.param.data_type)
-            param = self.param.data_type(FEE_params[channel].item())
+            if FEE_params[channel].shape == (1,):
+                param = self.param.data_type(FEE_params[channel].item())
+            else:
+                # This is for visualization and shouldn't be used for anything but d right now
+                assert channel == "d", "d is only param supported for multiple values currently"
+                param = self.param.data_type(FEE_params[channel][:,0].item())
             if channel in FEE_params_var:
                 param_var = self.param.data_type(FEE_params_var[channel].item())
             else:
