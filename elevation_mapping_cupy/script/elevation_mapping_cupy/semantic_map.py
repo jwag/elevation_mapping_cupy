@@ -369,6 +369,8 @@ class SemanticMap:
             if channel in FEE_params_var:
                 param_var = self.param.data_type(FEE_params_var[channel].item())
             else:
+                if fusion == "bayesian_inference":
+                    print(f"[WARNING]: Parameter variance not found for {channel}, setting to 0.0")
                 param_var = 0.0
             # update the layers with the fusion algorithm
             self.fusion_manager.execute_GET_plugin(

@@ -4,7 +4,9 @@ pointcloud_channel_fusions:
   default: 'average'          # 'average' fusion is used for channels not listed here
 
 GET_channel_fusions:
-  dig_difficulty: 'latest' # 'latest' fusion is used for the 'dig_difficulty' channel since we don't have uncertainty yet
+  dig_difficulty: 'latest' # 'latest' fusion is used for the 'dig_difficulty' channel since we don't have uncertainty yet #deprecated
+  d: 'latest' # 'latest' fusion is used for the 'd' channel as it is just used for visualization
+  MeanCuttingForceMag: 'latest' # 'latest' fusion is used for the 'MeanCuttingForceMag' channel as it is just used for visualization
   default: 'bayesian_inference'
 
 additional_layers: []
