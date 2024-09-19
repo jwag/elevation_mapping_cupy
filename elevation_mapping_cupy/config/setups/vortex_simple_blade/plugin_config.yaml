@@ -31,6 +31,18 @@ fee_index:
     vx: 1.0
     vz: 0.0
     s_q: 1.0
+    # These parameter variance values are based on ranges of parameters in the network
+    # WARNING: If parameter ranges change in the network normalization then these values should be updated
+    # WARNING: Also if the variance parameters that the network estimates is changed, these values should be updated
+    Q_var: 2500.0
+    d_var: 1.0e-6
+    w_var: 1.0e-4
+    alpha_var: 1.3539e-6
+    rho_var: 1.3539e-6
+    vx_var: 1.1111e-5
+    vz_var: 4.4444e-5 # currently vz_var is being estimated by the network, but for FEE_index we want it to be small
+    beta_var: 1.2219e-6
+    # s_q_var: 1.0e-5 # Disabled because the jacobian for s_q is not implemented in the network
 # Commenting Out OpenCV functionality for now
 # # Apply inpainting using opencv
 # inpainting:
