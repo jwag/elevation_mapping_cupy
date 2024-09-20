@@ -720,6 +720,30 @@ class ElevationMap:
             self.normal_filter_kernel(
                 dilated_map, self.elevation_map[2], self.normal_map, size=(self.cell_n * self.cell_n),
             )
+    
+    def update_plugin(self, plugin_name=None, layer_name=None):
+        """Update the plugin layers.
+           Either by specifying the plugin name or a layer name to find the corresponding plugin.
+
+        Args:
+            plugin_name (str): Plugin name
+            layer_name (str): Layer name
+        """
+        if plugin_name is None:
+            p_idx = self.plugin_manager.get_plugin_index_with_layer_name(layer_name)
+            plugin_name = self.plugin_manager.plugin_names[p_idx]
+        self.plugin_manager.update_with_name(
+                    plugin_name,
+                    self.elevation_map,
+                    self.layer_names,
+                    semantic_map=self.semantic_map.semantic_map,
+                    semantic_params=self.semantic_map.layer_names,
+                    semantic_new_map=self.semantic_map.new_map,
+                    semantic_var_params=self.semantic_map.var_layer_names,
+                    rotation=self.base_rotation,
+                    elements_to_shift=self.semantic_map.elements_to_shift,
+                    updated_inds=None, # Use internal logic to determine which indices to update
+                )
 
     def process_map_for_publish(self, input_map, fill_nan=False, add_z=False, xp=cp):
         """Process the input_map according to the fill_nan and add_z flags.
@@ -869,7 +893,7 @@ class ElevationMap:
         else:
             return False
 
-    def get_map_with_name_ref(self, name, data):
+    def get_map_with_name_ref(self, name, data, update_plugin=False):
         """Load a layer according to the name input to the data input.
 
         Args:
@@ -906,18 +930,8 @@ class ElevationMap:
             elif name in self.semantic_map.var_layer_names:
                 m = self.semantic_map.get_var_map_with_name(name)
             elif name in self.plugin_manager.layer_names:
-                self.plugin_manager.update_with_name(
-                    name,
-                    self.elevation_map,
-                    self.layer_names,
-                    semantic_map=self.semantic_map.semantic_map,
-                    semantic_params=self.semantic_map.layer_names,
-                    rotation=self.base_rotation,
-                    elements_to_shift=self.semantic_map.elements_to_shift,
-                    semantic_new_map=self.semantic_map.new_map,
-                    semantic_var_params=self.semantic_map.var_layer_names,
-                    updated_inds=None, # Use internal logic to determine which indices to update
-                )
+                if update_plugin:
+                    self.update_plugin(layer_name=name)
                 m = self.plugin_manager.get_map_with_name(name)
                 p = self.plugin_manager.get_param_with_name(name)
                 xp = self.xp_of_array(m)
@@ -965,7 +979,7 @@ class ElevationMap:
         normal_y_data[...] = xp.asnumpy(maps[1], stream=self.stream)
         normal_z_data[...] = xp.asnumpy(maps[2], stream=self.stream)
 
-    def get_layer(self, name):
+    def get_layer(self, name, update_plugin=False):
         """Return the layer with the name input.
 
         Args:
@@ -982,9 +996,8 @@ class ElevationMap:
             idx = self.semantic_map.layer_names.index(name)
             return_map = self.semantic_map.semantic_map[idx]
         elif name in self.plugin_manager.layer_names:
-            self.plugin_manager.update_with_name(
-                name, self.elevation_map, self.layer_names, self.semantic_map, self.base_rotation,
-            )
+            if update_plugin:
+                self.update_plugin(name)
             return_map = self.plugin_manager.get_map_with_name(name)
         else:
             print("Layer {} is not in the map, returning traversabiltiy!".format(name))

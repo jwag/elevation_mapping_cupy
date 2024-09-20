@@ -13,13 +13,20 @@ from inspect import signature
 
 
 @dataclass
-class PluginParams:
-    name: str
+class PluginParamsSingle:
     layer_name: str
     fill_nan: bool = False  # fill nan to invalid region
     is_height_layer: bool = False  # if this is a height layer
 
-
+@dataclass
+class PluginParams:
+    name: str
+    layer_name: List[str]  # list of layer names (would call layer_names, but leaving layer_name for backwards compatibility)
+    fill_nan: List[bool]  # list of booleans to fill nan for each layer
+    is_height_layer: List[bool]  # list of booleans to indicate if each layer is a height layer
+    def get_PluginParamsSingle(self, name: str):
+        index = self.layer_name.index(name)
+        return PluginParamsSingle(self.layer_name[index], self.fill_nan[index], self.is_height_layer[index])
 class PluginBase(ABC):
     """
     This is a base class of Plugins
@@ -127,9 +134,12 @@ class PluginManager(object):
                     # Add cell_n to params
                     extra_param["cell_n"] = self.cell_n
                     self.plugins.append(obj(**extra_param))
-        self.layers = cp.zeros((len(self.plugins), self.cell_n, self.cell_n), dtype=cp.float32)
+        # TODO: Really should rework the data structure and indexing to be simpler, but doing it this way for now
+        # to add this multi-layer capability without chaning the existing code much
         self.layer_names = self.get_layer_names()
+        self.layers = cp.zeros((len(self.layer_names), self.cell_n, self.cell_n), dtype=cp.float32)
         self.plugin_names = self.get_plugin_names()
+        self.plugin_names_per_layer = self.get_plugin_names_per_layer()
 
     def load_plugin_settings(self, file_path: str):
         print("Start loading plugins...")
@@ -138,12 +148,25 @@ class PluginManager(object):
         extra_params = []
         for k, v in cfg.items():
             if v["enable"]:
+                layer_name = v["layer_name"]
+                fill_nan = v["fill_nan"]
+                is_height_layer = v["is_height_layer"]
+                # Enable backwards compatibility with old config files by allowing the layer_name to be a single string or a list of strings
+                if not isinstance(layer_name, list):
+                    layer_name = [layer_name]
+                if not isinstance(fill_nan, list):
+                    fill_nan = [v["fill_nan"]]
+                if not isinstance(is_height_layer, list):
+                    is_height_layer = [v["is_height_layer"]]
+                assert len(layer_name) == len(fill_nan) == len(is_height_layer), "Length of layer_name, fill_nan, and is_height_layer must be the same."
+                # Sort things so that the layers are in the same order regardless of the order in the config file
+                layer_name, fill_nan, is_height_layer = map(list, zip(*sorted(zip(layer_name, fill_nan, is_height_layer))))
                 plugin_params.append(
                     PluginParams(
                         name=k if not "type" in v else v["type"],
-                        layer_name=v["layer_name"],
-                        fill_nan=v["fill_nan"],
-                        is_height_layer=v["is_height_layer"],
+                        layer_name=layer_name,
+                        fill_nan=fill_nan,
+                        is_height_layer=is_height_layer,
                     )
                 )
                 extra_params.append(v["extra_params"])
@@ -153,7 +176,7 @@ class PluginManager(object):
     def get_layer_names(self):
         names = []
         for obj in self.plugin_params:
-            names.append(obj.layer_name)
+            names += obj.layer_name
         return names
 
     def get_plugin_names(self):
@@ -161,26 +184,60 @@ class PluginManager(object):
         for obj in self.plugin_params:
             names.append(obj.name)
         return names
+    
+    def get_plugin_names_per_layer(self):
+        names = []
+        for obj in self.plugin_params:
+            obj_name = obj.name
+            # make the plugin name list the same length as the layer name list
+            # This means the plugin name will be repeated for each layer within the plugin
+            p_names = [obj_name] * len(obj.layer_name)
+            names += p_names
+        return names
 
     def get_plugin_index_with_name(self, name: str) -> int:
+        # Name here is the plugin name
         try:
             idx = self.plugin_names.index(name)
             return idx
         except Exception as e:
             print("Error with plugin {}: {}".format(name, e))
             return None
+    
+    def get_plugin_index_with_layer_name(self, layer_name: str) -> int:
+        try:
+            # Get the index of the layer name then use that to get the plugin name for that layer
+            # Then get the index of the plugin name
+            layer_idx = self.layer_names.index(layer_name)
+            plugin_name = self.plugin_names_per_layer[layer_idx]
+            idx = self.plugin_names.index(plugin_name)
+            return idx
+        except Exception as e:
+            print("Error with plugin {}: {}".format(layer_name, e))
+            return None
+
 
     def get_layer_index_with_name(self, name: str) -> int:
+        # Name here is the layer name
         try:
             idx = self.layer_names.index(name)
             return idx
         except Exception as e:
             print("Error with layer {}: {}".format(name, e))
             return None
+    
+    def get_layer_indicies_with_plugin_name(self, p_name: str) -> int:
+        try:
+            p_idx = self.get_plugin_index_with_name(p_name)
+            idx = [self.get_layer_index_with_name(layer_name) for layer_name in self.plugin_params[p_idx].layer_name]
+            return idx
+        except Exception as e:
+            print("Error with plugin {}: {}".format(p_name, e))
+            return None
 
     def update_with_name(
         self,
-        name: str,
+        name: str, # Plugin name
         elevation_map: cp.ndarray,
         layer_names: List[str],
         semantic_map=None,
@@ -191,15 +248,18 @@ class PluginManager(object):
         semantic_var_params=None,
         updated_inds=None,
     ):
-        idx = self.get_layer_index_with_name(name)
-        if idx is not None and idx < len(self.plugins):
+        p_idx = self.get_plugin_index_with_name(name)
+        l_inds = self.get_layer_indicies_with_plugin_name(name)
+        if len(l_inds) == 1: # Maintain backwards compatibility with single layer plugins
+            l_inds = l_inds[0]
+        if p_idx is not None and p_idx < len(self.plugins):
             # TODO: This is not a good way of differentiating between what function to call.
             # Either make the function signature the same or use a different method to differentiate like requiring a interface type to be specified in the class.
-            n_param = len(signature(self.plugins[idx]).parameters)
+            n_param = len(signature(self.plugins[p_idx]).parameters)
             if n_param == 5:
-                self.layers[idx] = self.plugins[idx](elevation_map, layer_names, self.layers, self.layer_names)
+                self.layers[l_inds] = self.plugins[p_idx](elevation_map, layer_names, self.layers, self.layer_names)
             elif n_param == 7:
-                self.layers[idx] = self.plugins[idx](
+                self.layers[l_inds] = self.plugins[p_idx](
                     elevation_map,
                     layer_names,
                     self.layers,
@@ -208,7 +268,7 @@ class PluginManager(object):
                     semantic_params,
                 )
             elif n_param == 8:
-                self.layers[idx] = self.plugins[idx](
+                self.layers[l_inds] = self.plugins[p_idx](
                     elevation_map,
                     layer_names,
                     self.layers,
@@ -218,7 +278,7 @@ class PluginManager(object):
                     rotation,
                 )
             elif n_param == 9:
-                self.layers[idx] = self.plugins[idx](
+                self.layers[l_inds] = self.plugins[p_idx](
                     elevation_map,
                     layer_names,
                     self.layers,
@@ -229,7 +289,7 @@ class PluginManager(object):
                     elements_to_shift,
                 )
             elif n_param == 10: # FEE_index plugin
-                self.layers[idx] = self.plugins[idx](
+                self.layers[l_inds] = self.plugins[p_idx](
                     elevation_map,
                     layer_names,
                     self.layers,
@@ -246,10 +306,10 @@ class PluginManager(object):
         if idx is not None:
             return self.layers[idx]
 
-    def get_param_with_name(self, name: str) -> PluginParams:
-        idx = self.get_layer_index_with_name(name)
-        if idx is not None:
-            return self.plugin_params[idx]
+    def get_param_with_name(self, name: str) -> PluginParamsSingle:
+        plugin_idx = self.get_plugin_index_with_layer_name(name)
+        if plugin_idx is not None:
+            return self.plugin_params[plugin_idx].get_PluginParamsSingle(name)
 
 
 if __name__ == "__main__":

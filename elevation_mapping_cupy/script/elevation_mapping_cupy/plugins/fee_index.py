@@ -113,11 +113,10 @@ class FEEIndex(PluginBase):
 
         # F, Fx, Fz = get_dig_difficulty_FEE_force(output['metadata'], in_metadata, self.metadata_FEE_param_names, fixed_params)
         # TODO: Make this a cuda accelerated function by implementing as a kernel
-        FI = plugin_layers[plugin_layer_names.index('FEE_index')]
-        dtype = FI.dtype # TODO: Should be a member variable
-        # TODO: Figure out how to have plugins have multiple layers output
-        # FI_var = plugin_layers[plugin_layer_names.index('FEE_index_var')]
-        FI_var = cp.zeros_like(FI)
+        FI_ind = plugin_layer_names.index('FEE_index')
+        dtype = plugin_layers[FI_ind].dtype # TODO: Should be a member variable
+        FI_var_ind = plugin_layer_names.index('FEE_index_var')
+        # FI_var = cp.zeros_like(FI)
         if updated_inds is None:
             # If no indices are passed, use phi phi != 0 as a mask to indicate valid FEE params
             mask = semantic_map[semantic_layer_names.index('phi')] != 0
@@ -138,7 +137,7 @@ class FEEIndex(PluginBase):
             # in training the network we enforce certain limits on the parameters and elsewhere not... This is a mess.
             # Ideally this should be consolidated into a single function that can be used for all purposes or at least a code generator that
             # handles this automatically so that mistakes don't happen and changes only need to be made manually in one location.
-            FI[xind,yind], beta, Fx, Fz, components = FEE(**est_params, minimizer='beta_from_phi', print_ang_sum=False, clip_angsum=True, return_components=True)
+            plugin_layers[FI_ind, xind,yind], beta, Fx, Fz, components = FEE(**est_params, minimizer='beta_from_phi', print_ang_sum=False, clip_angsum=True, return_components=True)
 
             # Combine all arguments needed for FEE_jacobian into a single dictionary
             J_args = {**est_params, **components}
@@ -161,5 +160,10 @@ class FEEIndex(PluginBase):
             for param in self.unknown_params_var:
                 var = semantic_new_map[semantic_var_params.index(param), xind, yind].get().item()
                 FEE_params_vars[self.J_keys.index(param[0:-4])] = var
-            FI_var[xind, yind] = pow(J, 2).dot(FEE_params_vars)
-        return FI
+            plugin_layers[FI_var_ind, xind, yind] = pow(J, 2).dot(FEE_params_vars) # TODO: Just trying out to see what var looks like. Change this back after fixing plugin layers
+        
+        FI_inds = [FI_ind, FI_var_ind]
+        # Sort the list so that the indicies are in increasing order.
+        # This is necessary as the update function expects the returned array to be sorted.
+        FI_inds.sort()
+        return plugin_layers[FI_inds]

@@ -191,7 +191,7 @@ def surf_elev_map_plot(elev, layer_color, layer_color_name, cell_n, resolution, 
    ax.set_box_aspect([xrange, yrange, z_scale*zrange])
 
 # TODO: Add plot to show loose soil on top of the elevation map
-def bar_elev_map_plot(elev, layer_color, layer_color_name, true_cell_n, resolution, offset, colormap='Spectral', scale_mode="z_fit", layer_color_min=None, layer_truth_str=None):
+def bar_elev_map_plot(elev, layer_color, layer_color_name, true_cell_n, resolution, offset, colormap='Spectral', scale_mode="z_fit", layer_color_rng=[None,None], layer_truth_str=None):
       """
       Plot a 3D bar plot of the elevation map. Colors are determined by the layer_color map
       which could be variance, or some other value. This plot is not interpolated and shows the
@@ -208,8 +208,8 @@ def bar_elev_map_plot(elev, layer_color, layer_color_name, true_cell_n, resoluti
          scale_mode: How to scale the z axis of the plot. "z_fit" scales size of the z axis box to match the
                      maximum x or y axis size. "equal" sets the size of the z axis such that the scale is the
                      same in all directions (i.e. a sphere would look like a sphere)
-         layer_color_min: Minimum value to consider for coloring the map with layer. If None, the minimum
-                          value of the layer_color is used
+         layer_color_rng: Minimum and maximium value to consider for coloring the map with layer. When None,
+                          the range of the layer_color is used
       """
       # Set bottom as minimum elevation
       minz = np.nanmin(elev)
@@ -230,10 +230,11 @@ def bar_elev_map_plot(elev, layer_color, layer_color_name, true_cell_n, resoluti
       valid = ~np.isnan(dz)
       layer_color[~valid] = np.nan
       # Get the colormap and normalize the layer_color values
-      layer_color_max = np.nanmax(layer_color)
-      if layer_color_min is None:
-         layer_color_min = np.nanmin(layer_color)
-      norm = colors.Normalize(vmin=layer_color_min, vmax=layer_color_max)
+      if layer_color_rng[0] is None:
+         layer_color_rng[0] = np.nanmin(layer_color)
+      if layer_color_rng[1] is None:
+         layer_color_rng[1] = np.nanmax(layer_color)
+      norm = colors.Normalize(vmin=layer_color_rng[0], vmax=layer_color_rng[1])
       cmap = colormaps[colormap]
       cmap.set_bad(color='black', alpha=0.0)
       rgba = cmap(norm(layer_color[valid]))

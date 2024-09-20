@@ -19,9 +19,9 @@ smooth_filter:
     input_layer_name: "min_filter"
 fee_index:
   enable: True
-  fill_nan: False
-  is_height_layer: False
-  layer_name: "FEE_index"
+  fill_nan: [False, False]
+  is_height_layer: [False, False]
+  layer_name: ["FEE_index", FEE_index_var] # The layer name. # WARNING: Must currently be in this order! TODO: Fix this by having layer_name be part of class not a config
   extra_params:
     Q: 0.0
     d: 0.2
