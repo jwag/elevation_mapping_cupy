@@ -402,6 +402,164 @@ def average_map_kernel(width, height, max_variance, initial_variance):
     )
     return average_map_kernel
 
+def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_min):
+    soil_erosion_kernel = cp.ElementwiseKernel(
+        in_params="raw U inds, raw U dt",
+        out_params="raw U map",
+        preamble=string.Template(
+            """
+            __device__ int get_map_idx(int idx, int layer_n) {
+                const int layer = ${width} * ${height};
+                return layer * layer_n + idx;
+            }
+            __device__ int get_idx(int idx_x, int idx_y) {
+                return ${width} * idx_x + idx_y;
+            }
+            __device__ float resolution() {
+                return ${resolution};
+            }
+            __device__ float16 h_slip(float16 alpha, float16 hc) {
+                return hc - tan(alpha) * ${resolution};
+            }
+            __device__ float16 V_T(float16 alpha, float16 hc) {
+                float16 h = h_slip(alpha, hc);
+                // V_T
+                return h * ${resolution} * ${resolution};
+            }
+            __device__ float16 Weight(float16 alpha, float16 hc) {
+                // Not doing the math to handle the change in weight due to varying soil compaction
+                // and moisture content like Holz does in his thesis because we don't have access
+                // to that data. Instead we'll just assume aconstant density.
+                return V_T(alpha, hc) * ${gamma};
+            }
+            __device__ float16 m_t(float16 alpha, float16 hc) {
+                // mass = weight/gravity
+                return Weight(alpha, hc) / 9.81;
+            }
+            __device__ float16 Len(float16 alpha) {
+                // TODO: should probably have a check to make sure alpha is not pi/2
+                return ${resolution} / cos(alpha);
+            }
+            __device__ float16 alpha_max(float16 hc) {
+                return atan(hc / ${resolution});
+            }
+            __device__ float16 s_prime(float16 alpha, float16 hc) {
+                float16 L = Len(alpha);
+                float16 W = Weight(alpha, hc);
+                return ${cohesion} * L + W * cos(alpha) * tan(${phi});
+            }
+            __device__ float16 tau_prime(float16 alpha, float16 hc) {
+                float16 W = Weight(alpha, hc);
+                return W * sin(alpha);
+            }
+            __device__ float safety_factor(float16 alpha, float16 hc) {
+                float16 s = s_prime(alpha, hc);
+                float16 tau = tau_prime(alpha, hc);
+                if (tau == 0.0) {
+                    // If tau is zero, then the safety factor is infinite
+                    return 1000;
+                }
+                return s / tau;
+            }
+            """).substitute(width=width, height=height, resolution=resolution, gamma=gamma),
+        operation=string.Template(
+            """
+            // This whole function largely follows Holz's approach in is 2009 thesis
+            // "Deformable Terrain for Real-Time Simulation" (Section 4.5)
+
+            // Indicies of the cells we are considering for erosion
+            // idx is the center cell, idx_px is the cell one larger in x direction,
+            // and idx_py is the cell one larger in y direction
+            idx = get_idx(inds[i * 2], inds[i * 2 + 1]);
+            idx_px = get_idx(inds[i * 2] + 1, inds[i * 2 + 1]);
+            idx_py = get_idx(inds[i * 2], inds[i * 2 + 1] + 1);
+            U H = map[get_map_idx(idx, 0)];
+            U L = map[get_map_idx(idx, 7)];
+            U valid = map[get_map_idx(idx, 2)];
+            
+            if (valid > 0.5) {
+                // perform slip calcuation for x direction then y direction
+                for (int j = 0; j < 2; j++) {
+                    int idx_ = j == 0 ? idx_px : idx_py;
+                    U H_ = map[get_map_idx(idx_, 0)];
+                    U L_ = map[get_map_idx(idx_, 7)];
+                    U valid_ = map[get_map_idx(idx_, 2)];
+                    if (valid_ > 0.5) {
+                        U delta_H = H - H_;
+                        // Calculate the direction of the slip
+                        // 1 if soil should flow from the considered cell , -1 if into
+                        int slip_dir = delta_H > 0 ? 1 : -1;
+                        // Now modify this calculation so that slip is only possible if
+                        // there is any loose soil in the cell where the soil is flowing from
+                        if (slip_dir == 1) {
+                            delta_H = min(L, delta_H);
+                        }
+                        else {
+                            delta_H = min(L_, -delta_H);
+                        }
+                        float16 delta_H_min = tan(${alpha_min}) * ${resolution};
+                        // If the height difference is less than the minimum height difference
+                        // required for slip, then we can skip this cell
+                        if (delta_H <= delta_H_min) { continue; }
+                        
+                        // TODO: Find Minimum of the safety factor over alpha
+                        // There is an analytical solution to this, but it's a bit complicated and
+                        // I still need to look through the references in Holz's thesis to derive it.
+                        // For now, we'll just use an approximate solution by sampling the safety factor
+                        // at a few points and taking the minimum.
+                        int n = 10;
+                        // Start the search at alpha_min
+                        float16 alpha_max = alpha_max(delta_H);
+                        float16 alpha_ = alpha_max;
+                        float16 alpha_star = alpha_;
+                        float16 safety_ = safety_factor(alpha_star, delta_H);
+                        float16 safety_min = safety_;
+                        // If alpha_max <= alpha_min minimum we assume no slip/erosion
+                        // This shouldn't be necessary since we are checking this above with delta_H_min
+                        // if (alpha_max <= ${alpha_min}) { continue; }
+                        float16 delta_alpha = (alpha_max - ${alpha_min}) / n;
+                        for (int k = 0; k < n; k++) {
+                            alpha_ = ${alpha_min} + k * delta_alpha;
+                            safety_ = safety_factor(alpha_, delta_H);
+                            if (safety_ < safety_min) {
+                                safety_min = safety_;
+                                alpha_star = alpha_;
+                            }
+                        // Now we have the minimum safety factor and the corresponding alpha
+                        // If the safety factor is greater than 1, then the soil is stable and we don't need to do anything
+                        if (safety_min > 1) { continue; }
+                        // If the safety factor is less than 1, then the soil is unstable and we need to erode
+                        float16 m = m_t(alpha_star, delta_H);
+                        float16 s = s_prime(alpha_star, delta_H);
+                        float16 tau = tau_prime(alpha_star, delta_H);
+                        float16 len = Len(alpha_star);
+                        // Calculate the slip velocity
+                        // Assuming v(t_0) = 0 at each iteration for now
+                        float16 v = ((tau - s) / m) * dt;
+                        // Compute the change in height
+                        float16 slip_h = delta_H * (v / len) * dt;
+                        // WARNING: If the timestep is too large then the slip height
+                        // can be larger than the height difference.
+                        // Handle this by limiting the slip height so that the the maximum slip is
+                        // limited by the slip that can be attained at the minimum alpha.
+                        // TODO: Double check this logic
+                        h_slip_max = h_slip(alpha_min, delta_H);
+                        slip_h = min(slip_h, h_slip_max);
+                        // Update the height and loose_soil of both cells
+                        // TODO: Double check this logic
+                        atomicAdd(&map[get_map_idx(idx, 0)], -slip_h*slip_dir);
+                        atomicAdd(&map[get_map_idx(idx, 7)], -slip_h*slip_dir);
+                        atomicAdd(&map[get_map_idx(idx_, 0)], slip_h*slip_dir);
+                        atomicAdd(&map[get_map_idx(idx_, 7)], slip_h*slip_dir);
+                    }
+                }
+            }
+            """
+        ).substitute(alpha_min=alpha_min),
+        name="soil_erosion_kernel",
+    )
+    return soil_erosion_kernel
+
 
 def dilation_filter_kernel(width, height, dilation_size):
     dilation_filter_kernel = cp.ElementwiseKernel(

@@ -66,6 +66,7 @@ subscribers:
       blade_height: 0.660
       # TODO: Tune all of these parameters
       move_dir_normal_weight: 0.5
+      # TODO: Consider moving some of these parameters to the parameters.yaml file as they should be the same for all blades
       swell_factor: 1.0 # TODO: Make parameter (use something reasonable). Set to 1 for no swell
       spill_factor: 0.05 # Proporation of loose material moved during a sweep that is spilled
       compacted_soil_moist_unit_weight: 14635.91630769231 # Currently set to 50% relative density of loam in Vortex
@@ -75,3 +76,5 @@ subscribers:
       depth_weight_avg_coeff: 0.0 # Set to 0 for regular average
       max_surcharge_vol_per_unit_width: 0.3 # 0.1-0.3 seems optimal? Units of m^2. Set to -1 to disable limit. Can think about as size of pile in front of blade, e.g. blade_height*surcharge_dist_x for rectangular
       em_FEE_max_projection_dist: 0.5 # Maximum distance to extrapolate FEE params generation from last valid em data
+      erosion_ROI_dx: 0.5 # Length of region around blade to consider for erosion
+      erosion_ROI_dy: 0.2 # Width of region around blade to consider for erosion (will be blade_width+erosion_ROI_dy)
