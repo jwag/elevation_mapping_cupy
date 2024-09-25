@@ -15,62 +15,67 @@ import yaml
 @dataclass
 class Parameter(Serializable):
     """
-    This class holds the parameters for the elevation mapping algorithm.
-    
+      
+
     Attributes:
-        resolution: The resolution in meters.
-                    (Default: ``0.04``)
+ibu                         (Default: ``0.04``)
         subscriber_cfg: The configuration for the subscriber.
                         (Default: ``{ "front_cam": { "channels": ["rgb", "person"], "topic_name": "/elevation_mapping/pointcloud_semantic", "data_type": "pointcloud", } }``)
-        additional_layers: The additional layers for the map.  
-                           (Default: ``["rgb"]``)
+ meters        additional_layers: The additional layers for the map.  
+   (Defa                           (Default: ``["rgb"]``)
         fusion_algorithms: The list of fusion algorithms.  
-                           (Default: ``[ "image_color", "image_exponential", "pointcloud_average", "pointcloud_bayesian_inference", "pointcloud_class_average", "pointcloud_class_bayesian", "pointcloud_class_max", "pointcloud_color", ]``)
-        pointcloud_channel_fusions: The fusion for pointcloud channels.  
-                                   (Default: ``{"rgb": "color", "default": "class_average"}``)
+    additi                           (Default: ``[ "image_color", "image_exponential", "pointcloud_average", "pointcloud_bayesian_inference", "pointcloud_class_average", "pointcloud_class_bayesian", "pointcloud_class_max", "pointcloud_color", ]``)
+       (Def        pointcloud_channel_fusions: The fusion for pointcloud channels.  
+The list of                                    (Default: ``{"rgb": "color", "default": "class_average"}``)
         GET_channel_fusions: The fusion for GET channels.
-                            (Default: ``{"default": "latest"}``)
-        image_channel_fusions: The fusion for image channels.  
-                               (Default: ``{"rgb": "color", "default": "exponential"}``)
-        data_type: The data type for the map.  
-                   (Default: ``np.float32``)
-        average_weight: The weight for the average fusion.  
+channels.                            (Default: ``{"default": "latest"}``)
+       (Default        image_channel_fusions: The fusion for image channels.  
+                                               (Default: ``{"rgb": "color", "default": "exponential"}``)
+type for the map.        data_type: The data type for the map.  
+ault: ``np.float32                   (Default: ``np.float32``)
+ for the average fu        average_weight: The weight for the average fusion.  
                         (Default: ``0.5``)
-        map_length: The map's size in meters.  
-                    (Default: ``8.0``)
-        sensor_noise_factor: The point's noise is sensor_noise_factor*z^2 (z is distance from sensor).  
-                            (Default: ``0.05``)
-        mahalanobis_thresh: Points outside this distance is outlier.  
-                            (Default: ``2.0``)
+  (Default: ``0.5``)        map_length: The map's size in meters.  
+: The map's size in me                    (Default: ``8.0``)
+
+                     sensor_noise_fa                            (Default: ``0.05``)
+sensor_noise_factor: The                                (Default: ``2.0``)
+noise_factor*z^2 (z is distance from sensor).  
         outlier_variance: If point is outlier, add this value to the cell.  
-                          (Default: ``0.01``)
-        drift_compensation_variance_inlier: Cells under this value is used for drift compensation.  
-                                           (Default: ``0.1``)
-        time_variance: Add this value when update_variance is called.  
-                       (Default: ``0.01``)
-        time_interval: Time layer is updated with this interval.  
-                       (Default: ``0.1``)
-        max_variance: The maximum variance for each cell.  
-                       (Default: ``1.0``)
-        dilation_size: The dilation filter size before traversability filter.  
-                       (Default: ``2``)
-        dilation_size_initialize: The dilation size after the init.  
-                                  (Default: ``10``)
-        drift_compensation_alpha: The drift compensation alpha for smoother update of drift compensation.  
-                                  (Default: ``1.0``)
-        traversability_inlier: Cells with higher traversability are used for drift compensation.  
-                               (Default: ``0.1``)
-        wall_num_thresh: If there are more points than this value, only higher points than the current height are used to make the wall more sharp.  
-                         (Default: ``100``)
-        min_height_drift_cnt: Drift compensation only happens if the valid cells are more than this number.  
-                              (Default: ``100``)
-        max_ray_length: The maximum length for ray tracing.  
-                        (Default: ``2.0``)
-        cleanup_step: Substitute this value from validity layer at visibility cleanup.  
-                      (Default: ``0.01``)
-        cleanup_cos_thresh: Substitute this value from validity layer at visibility cleanup.  
-                            (Default: ``0.5``)
-        min_valid_distance: Points with shorter distance will be filtered out.  
+s distance is outlier.                            (        drift_compensation_variance_inlier: Cells under this value is used for drift compensation.  
+
+                                            time_variance: Add this value when update_variance is called.  
+iance: If point is outlier,                        (Default: ``0.01``)
+  (Default: ``0.01``)
+        drif        time_interva                       (Default: ``0.1``)
+is value is used for drift compensation.  
+                                   max_variance: The maximum variance for each cell.  
+ Add this value when update_var                       (Default: ``1.0``)
+(Default: ``0.01``)
+            dilation_size: The dilation filter size before traversability filter.  
+with this interval.  
+                                           dilation_size_initialize: The dilation size after the init.  
+iance: The maximum variance for ea           drift_compensation_alpha: The drift compensation alpha for smoother update of drift compensation.  
+     (Default: ``1.0``)                                  (Default: ``1.0        traversability_inlier: Cells with higher traversability are used for drift compensation.  
+ty filter.  
+                       (Defau                               (Default: ``0.1``)
+e: The dilation size after the init.                                (Default: ``100``)
+
+                                  min_height_drift_cnt: Drift compensation only happens if the valid cells are more than this number.  
+ompensation_alpha: The drift compensatio                              (Default: ``100``)
+ersability_inlier: Cells with higher traversability are used for drift compensation.  
+                 max_ray                        (Default: ``2.0``)
+l_num_thresh: If there are more points than this value, only higher points than the current height are used to make the wall more sharp.  
+                 cleanup_ste                      (Default: ``0.01``)
+height_drift_cnt: Drift compensation only happens if the valid cells are more than this number.  
+           cleanup_cos_thresh: Substitute this value from validity layer at visibility cleanup.  
+efault: ``2.0``)
+        cleanup_step: Substi           min_valid_distance: Points with shorter distance will be filtered out.  
+ility cleanup.  
+                      (Default: ``0.01``)                                 max_height_range: Points higher than this value from sensor will be filtered out to disable ceiling.  
+yer at visibility cleanup.  
+                                    ramped_height_range_a: If z > max(d - ramped_height_range_b, 0) * ramped_height_range_a + ramped_height_range_c, reject.  
+ce: Points with shorter distance will be filtered out.  
                             (Default: ``0.3``)
         max_height_range: Points higher than this value from sensor will be filtered out to disable ceiling.  
                            (Default: ``1.0``)
@@ -136,14 +141,44 @@ class Parameter(Serializable):
                 (Default: ``None``)
         true_cell_n: True number of cells in the map.  
                      (Default: ``None``)
-        use_soil_property_estimation: Use soil property estimation network.
-                    (Default: ``False``)
-        soil_prop_est_net_checkpoint_path: Path to the soil property estimation network checkpoint.
-                    (Default: ``None``)
-        bayesian_soil_wedge_exp_weight_coeff: The coefficient for the exponential weight in the Bayesian inference for the soil wedge.
-                    (Default: ``1.0``)
-        min_soil_prop_marking_dist: # All points less than this distance from the blade are marked with the soil properties estimated by the network.
-                    (Default: ``0.3``)
+        move_dir_normal_weight: Weight for the normal direction of movement in GET update.
+                                (Default: ``0.5``)
+        swell_factor: Swell factor for the soil. Set to 1 for no swell of GET disturbed soil.
+                      (Default: ``1.0``)
+        spill_factor: (deprecated. Use erosion instead) Proportion of loose material moved during a sweep that is spilled.  
+                      (Default: ``0.05``)
+        compacted_soil_moist_unit_weight: Unit weight of compacted soil in N/m^3.  
+                                          (Default: ``14635.91630769231`` 50% relative density of Vortex loam.)
+        l_fit_max: Maximum distance from the blade to find surface points for surface plane fitting in FEE param calculation.
+                   (Default: ``1.0``)
+        surf_interp_coeff: Coefficient for exponential function weighting distance from blade for surface fitting in FEE param calculation.
+                           (Default: ``3.0``)
+        l_surcharge_max: Maximum distance from the blade to include loose soil in the FEE surcharge calculation.
+                         (Default: ``1.0``)
+        depth_weight_avg_coeff: Coefficient for depth-weighted average in FEE param calculation. Set to 0 for regular average.  
+                                (Default: ``0.0``)
+        max_surcharge_vol_per_unit_width: Maximum surcharge volume per unit width of GET. Set to -1 to disable limit.  
+                                          (Default: ``0.3``)
+        em_FEE_max_projection_dist: Maximum distance to extrapolate FEE parameters from last valid elevation mapping data.  
+                                    (Default: ``0.5``)
+        erosion_ROI_dx: Length of region around GET center to consider for soil erosion.  
+                        (Default: ``0.5``)
+        erosion_ROI_dy: Width of region around GET center to consider for soil erosion.  
+                        (Default: ``3.364``)
+        loose_soil_cohesion: Cohesion of loose soil in Pa. Used in soil erosion calculation.
+                             (Default: ``5000``)
+        loose_soil_phi: Internal friction angle of loose soil in radians.  Used in soil erosion calculation.
+                        (Default: ``0.4``)
+        soil_erosion_alpha_min: Minimum angle of slope to consider for soil erosion in radians.  
+                                (Default: ``0.05``)
+        use_soil_property_estimation: Use soil property estimation network.  
+                                      (Default: ``False``)
+        soil_prop_est_net_checkpoint_path: Path to the soil property estimation network checkpoint.  
+                                           (Default: ``None``)
+        bayesian_soil_wedge_exp_weight_coeff: The coefficient for the exponential weight in the Bayesian inference for the soil wedge.  
+                                              (Default: ``1.0``)
+        min_soil_prop_marking_dist: Minimum distance for marking soil properties.  
+                                    (Default: ``0.3``)
     """
     resolution: float = 0.04  # resolution in m.
     subscriber_cfg: dict = field(
@@ -243,10 +278,30 @@ class Parameter(Serializable):
     w3: np.ndarray = field(default_factory=lambda: np.zeros((4, 1, 3, 3)))  # weights for the third layer
     w_out: np.ndarray = field(default_factory=lambda: np.zeros((1, 12, 1, 1)))  # weights for the output layer
 
+    # GET Movement parameters
+    move_dir_normal_weight: float = 0.5  # Weight for the normal direction of movement in GET update.
+    swell_factor: float = 1.0  # Swell factor for the soil. Set to 1 for no swell of GET disturbed soil.
+    spill_factor: float = 0.05  # Proportion of loose material moved during a sweep that is spilled.
+    compacted_soil_moist_unit_weight: float = 14635.91630769231  # Unit weight of compacted soil in N/m^3.
+    l_fit_max: float = 1.0  # Maximum distance from the blade to find surface points for surface plane fitting in FEE param calculation.
+    surf_interp_coeff: float = 3.0  # Coefficient for exponential function weighting distance from blade for surface fitting in FEE param calculation.
+    l_surcharge_max: float = 1.0  # Maximum distance from the blade to include loose soil in the FEE surcharge calculation.
+    depth_weight_avg_coeff: float = 0.0  # Coefficient for depth-weighted average in FEE param calculation. Set to 0 for regular average.
+    max_surcharge_vol_per_unit_width: float = 0.3  # Maximum surcharge volume per unit width of GET. Set to -1 to disable limit.
+    em_FEE_max_projection_dist: float = 0.5  # Maximum distance to extrapolate FEE parameters from last valid elevation mapping data.
+    erosion_ROI_dx: float = 0.5  # Length of region around GET center to consider for soil erosion.
+    erosion_ROI_dy: float = 3.364 # Width of region around GET center to consider for soil erosion.
+    # TODO: Tune these default values
+    loose_soil_cohesion: float = 5000  # Cohesion of loose soil in Pa. Used in soil erosion calculation.
+    loose_soil_phi: float = 0.4  # Internal friction angle of loose soil in radians. Used in soil erosion calculation.
+    soil_erosion_alpha_min: float = 0.05  # Minimum angle of slope to consider for soil erosion in radians.
+
+    # Soil property estimation
     use_soil_property_estimation: bool = False  # use soil property estimation network
     soil_prop_est_net_checkpoint_path: str = None  # path to the soil property estimation network checkpoint
     bayesian_soil_wedge_exp_weight_coeff: float = 1.0  # the coefficient for the exponential weight in the Bayesian inference for the soil wedge
     min_soil_prop_marking_dist: float = 0.3  # minimum distance for marking soil properties
+    
     # # not configurable params
     true_map_length: float = None  # true length of the map
     cell_n: int = None  # number of cells in the map

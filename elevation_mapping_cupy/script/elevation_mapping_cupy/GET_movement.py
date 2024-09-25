@@ -8,6 +8,8 @@ from trimesh.constants import tol
 import time
 import warnings
 
+from elevation_mapping_cupy.parameter import Parameter
+
 import matplotlib.pyplot as plt
 
 from shapely.geometry import Polygon, MultiPolygon
@@ -868,12 +870,13 @@ class GETMovement:
     library or a fully custom implementation of the swept volume generation.
     """
 
-    def __init__(self, GET_ID, GET_model_name, GET_params, xp=np, data_type=np.float32):
+    def __init__(self, GET_ID, GET_model_name, param: Parameter, GET_params, xp=np, data_type=np.float32):
         """Initialize GET for a specific sensor.
 
         Args:
             GET_ID (str):           GET ID. Should be unique for each instance of a GETMovement
             GET_model_name (str):   Type of GET. Only "simple_blade" is supported for now.
+            param (dict):          Parameters for the elevation map.
             GET_params (dict):      Parameters for the chosen GET type specified in GET_name.
             xp (module):            Numpy or CuPy module. Default is numpy. Will not be used for trimesh operations.
             data_type (dtype):      Data type for the GET geometry. Default is np.float32.
@@ -887,14 +890,15 @@ class GETMovement:
         assert GET_model_name in self.GET_models.keys(), "GET_name should be chosen from {}".format(self.GET_models.keys())
         self.GET_model_name = GET_model_name
         self.GET_model = self.GET_models[self.GET_model_name]
+        self.param = param # Parameters of elevtion map
         self.GET_params = {}
         # Make sure params are compatible with class
         for key in GET_params.keys():
             self.GET_params[key] =np.array(GET_params[key], dtype=self.data_type)
         
-        if self.GET_params["l_surcharge_max"] > self.GET_params["l_fit_max"]:
+        if self.param.l_surcharge_max > self.param.l_fit_max:
             warnings.warn("l_surcharge_max must be less than or equal to l_fit_max right now. Setting equal. Possibly fix this")
-            self.GET_params["l_surcharge_max"] = self.GET_params["l_fit_max"]
+            self.param.l_surcharge_max = self.param.l_fit_max
         
         # Now generate the GET geometry
         # TODO: Add support for multiple planar GET surfaces at different angles
@@ -1175,7 +1179,7 @@ class GETMovement:
                 point_z = elevation_map[0, intersected_cell_ind[0], intersected_cell_ind[1]].get() - pierce_dist[i]
                 inds = np.array([xind, yind])
                 x_t = self.get_xy_GET_distance(inds, point_z, t_dir, GET_plane_origin, normal, cell_n, resolution)
-                if (x_t >  self.GET_params['l_fit_max']):
+                if (x_t >  self.param.l_fit_max):
                     assert surf_points[i].shape[0] > 0, "No points found for surface"
                     break
                 if (elevation_map[2, xind, yind] > 0.5):
@@ -1184,7 +1188,7 @@ class GETMovement:
                     q = elevation_map[7, xind, yind].get()
                     z = elevation_map[0, xind, yind].get() - q
                     # If the distance is less than or equal to the maximum length, include in Q calculation
-                    if x_t <= self.GET_params['l_surcharge_max']:
+                    if x_t <= self.param.l_surcharge_max:
                         surcharge_inds = np.concatenate((surcharge_inds, np.array([[xind, yind]])), axis=0)
                     surf_points[i] = np.concatenate((surf_points[i], np.array([[x_t[0], z]])), axis=0, dtype=self.data_type)
                     surf_points_inds[i] = np.concatenate((surf_points_inds[i], np.array([[xind, yind]])), axis=0, dtype=int)
@@ -1243,7 +1247,7 @@ class GETMovement:
         Returns:
             FEE_params (dict):                   The FEE parameters alpha, rho, d, w, V_Q (prior to soil failure)
             surf_points_dict (dict):             A dictionary of the surface points for each intersected cell {[points[n,2]], [map_inds[n,2]]}
-                                                 where points has the form (x_t, z) and n is the number of identified poitns per intersected cell
+                                                 where points has the form (x_t, z) and n is the number of identified points per intersected cell
                                                  and there lists are length N for N intersected cells.
         """
         surf_points, surf_points_inds, valid, V_Q = self.get_surface_points(intersected_inds, translation[0:2], elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution)
@@ -1256,7 +1260,7 @@ class GETMovement:
         surf_points_inds = [surf_point_ind for surf_point_ind, is_valid in zip(surf_points_inds, valid) if is_valid]
         # Now fit surface points to a line to get the slope of the surface in the direction of movement (alpha_i)
         # First compute weights for the points
-        W = [np.exp(-self.GET_params['surf_interp_coeff'] * surf_point[:,0]) for surf_point in surf_points]
+        W = [np.exp(-self.param.surf_interp_coeff * surf_point[:,0]) for surf_point in surf_points]
         # Scale so that W sums to 1 (I don't think this is necessary because the weighted line fit doesn't assume this)
         W = [Wi / np.sum(Wi) for Wi in W]
         # Now find the slope using weighted least squares
@@ -1315,7 +1319,7 @@ class GETMovement:
         # Perform another weighted average to obtain d_ and alpha_. Then compute rho_ from rho_prime and alpha_
         # Define weights as a function of the depth of cut d_hat.
         d_hat_np = np.array(d_hat)
-        W_d = np.exp(self.GET_params['depth_weight_avg_coeff']*d_hat_np)
+        W_d = np.exp(self.param.depth_weight_avg_coeff*d_hat_np)
         W_d  = W_d/np.sum(W_d) # Must sum to 1 for weighted average
         d_ = np.dot(W_d, d_hat_np)
         alpha_ = np.dot(W_d, alpha_hat)
@@ -1429,7 +1433,7 @@ class GETMovement:
         
         # Limit V_Q by the maximum surcharge volume per unit width to help deal with not modelling erosion/spill
         V_q = V_Q/(w)
-        V_q_lim = self.GET_params['max_surcharge_vol_per_unit_width']
+        V_q_lim = self.param.max_surcharge_vol_per_unit_width
         if V_q_lim >= 0:
             V_q = np.minimum(V_q, V_q_lim)
         V_q = np.maximum(V_q, 0.0) # Ensure that the surcharge volume is non-negative
@@ -1438,7 +1442,7 @@ class GETMovement:
         # Compute Q
         # In math - compacted_soil_moist_unit_weight: gamma (fixed value for elevation mapping),
         #           swell_factor: epsilon
-        Q = V_Q * self.GET_params['compacted_soil_moist_unit_weight'] / self.GET_params['swell_factor']
+        Q = V_Q * self.param.compacted_soil_moist_unit_weight / self.param.swell_factor
         Q = Q.astype(self.data_type)
         V_Q = V_Q.astype(self.data_type)
 
@@ -1538,7 +1542,7 @@ class GETMovement:
             # but this could be changed to only use the x and z axes or to also account for changed orientation.
             dist = np.linalg.norm(D_r_DG[:,0:3], axis=1)
             # Keep it simple for now by ensuring all points are within the max projection distance
-            if np.any(dist > self.GET_params['em_FEE_max_projection_dist']):
+            if np.any(dist > self.param.em_FEE_max_projection_dist):
                 # If the distance is too far, don't project the depth
                 return None, None
         # Return d_prime given the assumed surface and current position
@@ -1724,7 +1728,7 @@ class GETMovement:
                 if FEE_em_params is not None:
                     FEE_proj_params = self.set_blade_depth_calc_params(FEE_em_params, GET_plane_origin, translation)
                 # Find the direction of material movement
-                move_dir, valid_movement = self.material_movement_direction(normal, translation, normal_weight=self.GET_params['move_dir_normal_weight'])
+                move_dir, valid_movement = self.material_movement_direction(normal, translation, normal_weight=self.param.move_dir_normal_weight)
                 if not valid_movement:
                     warnings.warn("Invalid movement direction, skipping update of elevation map")
                 else:
@@ -1772,11 +1776,10 @@ class GETMovement:
                         compact_moved = compact_moved[unique_inds]
                         loose_moved = loose_moved[unique_inds]
                         start_var = start_var[unique_inds]
-                    
                     # Compute the change in surcharge over the sweep prior to dealing with errors
                     # in the deposited locations
-                    compact_swelled_moved = compact_moved*self.GET_params['swell_factor']
-                    loose_spilled = loose_moved * self.GET_params['spill_factor']
+                    compact_swelled_moved = compact_moved*self.param.swell_factor
+                    loose_spilled = loose_moved * self.param.spill_factor
                     dV_Q = self.compute_delta_surcharge(loose_remaining, compact_swelled_moved, loose_spilled, resolution)
                     valid_deposit_inds = submap[2, deposit_inds[:,0], deposit_inds[:,1]] > 0.5
                     # Handle case where the material is deposited outside the valid portion of the map
@@ -1790,14 +1793,14 @@ class GETMovement:
                         loose_spilled = loose_spilled[valid_deposit_inds]
                         start_var = start_var[valid_deposit_inds]
                     # Deposit the material in the new location for elevation and loose material
-                    delta_h_swelled = compact_moved*self.GET_params['swell_factor'] + loose_moved - loose_spilled
+                    delta_h_swelled = compact_moved*self.param.swell_factor + loose_moved - loose_spilled
                     # If swell factor is 1 then should be equal to pierce_dist
                     submap[0, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled
                     submap[7, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled
                     # Update the variance of the cells where material was deposited
                     # TODO: Review this method and compare to d'Adamo pg. 114 
                     # Should the pierce_dist factor in here?
-                    # submap[1, deposit_inds[:,0], deposit_inds[:,1]] += var_h * self.GET_params['swell_factor']**2 
+                    # submap[1, deposit_inds[:,0], deposit_inds[:,1]] += var_h * self.param.swell_factor**2 
                     submap[1, deposit_inds[:,0], deposit_inds[:,1]] += var_h + delta_h_swelled**2 + start_var
                     # Update the upper bound
                     submap[5, deposit_inds[:,0], deposit_inds[:,1]] = submap[0, deposit_inds[:,0], deposit_inds[:,1]]
