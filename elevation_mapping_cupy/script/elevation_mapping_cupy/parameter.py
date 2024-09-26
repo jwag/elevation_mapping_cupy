@@ -161,14 +161,18 @@ ce: Points with shorter distance will be filtered out.
                                           (Default: ``0.3``)
         em_FEE_max_projection_dist: Maximum distance to extrapolate FEE parameters from last valid elevation mapping data.  
                                     (Default: ``0.5``)
+        use_soil_erosion: Enable soil erosion calculation or not.
+                            (Default: ``True``)
+        soil_erosion_maximum_dt: Maximum time step for soil erosion calculation.
+                                (Default: ``0.1``)
         erosion_ROI_dx: Length of region around GET center to consider for soil erosion.  
-                        (Default: ``0.5``)
+                        (Default: ``1.5``)
         erosion_ROI_dy: Width of region around GET center to consider for soil erosion.  
-                        (Default: ``3.364``)
+                        (Default: ``0.6``)
         loose_soil_cohesion: Cohesion of loose soil in Pa. Used in soil erosion calculation.
-                             (Default: ``5000``)
+                             (Default: ``74``)
         loose_soil_phi: Internal friction angle of loose soil in radians.  Used in soil erosion calculation.
-                        (Default: ``0.4``)
+                        (Default: ``0.26``)
         soil_erosion_alpha_min: Minimum angle of slope to consider for soil erosion in radians.  
                                 (Default: ``0.05``)
         use_soil_property_estimation: Use soil property estimation network.  
@@ -289,11 +293,14 @@ ce: Points with shorter distance will be filtered out.
     depth_weight_avg_coeff: float = 0.0  # Coefficient for depth-weighted average in FEE param calculation. Set to 0 for regular average.
     max_surcharge_vol_per_unit_width: float = 0.3  # Maximum surcharge volume per unit width of GET. Set to -1 to disable limit.
     em_FEE_max_projection_dist: float = 0.5  # Maximum distance to extrapolate FEE parameters from last valid elevation mapping data.
-    erosion_ROI_dx: float = 0.5  # Length of region around GET center to consider for soil erosion.
-    erosion_ROI_dy: float = 3.364 # Width of region around GET center to consider for soil erosion.
+    # Soil Erosion parameters
+    use_soil_erosion: bool = True # Enable soil erosion calculation or not.
+    soil_erosion_maximum_dt: float = 0.1  # Maximum time step for soil erosion calculation.
+    erosion_ROI_dx: float = 1.5  # Length of region around GET center to consider for soil erosion.
+    erosion_ROI_dy: float = 0.6 # Width of region around GET center to consider for soil erosion.
     # TODO: Tune these default values
-    loose_soil_cohesion: float = 5000  # Cohesion of loose soil in Pa. Used in soil erosion calculation.
-    loose_soil_phi: float = 0.4  # Internal friction angle of loose soil in radians. Used in soil erosion calculation.
+    loose_soil_cohesion: float = 74.0  # Cohesion of loose soil in Pa. Used in soil erosion calculation.
+    loose_soil_phi: float = 0.26  # Internal friction angle of loose soil in radians. Used in soil erosion calculation.
     soil_erosion_alpha_min: float = 0.05  # Minimum angle of slope to consider for soil erosion in radians.
 
     # Soil property estimation
@@ -301,7 +308,7 @@ ce: Points with shorter distance will be filtered out.
     soil_prop_est_net_checkpoint_path: str = None  # path to the soil property estimation network checkpoint
     bayesian_soil_wedge_exp_weight_coeff: float = 1.0  # the coefficient for the exponential weight in the Bayesian inference for the soil wedge
     min_soil_prop_marking_dist: float = 0.3  # minimum distance for marking soil properties
-    
+
     # # not configurable params
     true_map_length: float = None  # true length of the map
     cell_n: int = None  # number of cells in the map

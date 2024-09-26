@@ -330,7 +330,7 @@ class ElevationMap:
         self.normal_filter_kernel = normal_filter_kernel(self.cell_n, self.cell_n, self.resolution)
 
         # Compute the loose soil density based on the swell factor and the assumed compacted soil density
-        loose_soil_gamma = self.param.compacted_soil_moist_unit_weight * self.param.swell_factor
+        loose_soil_gamma = self.param.compacted_soil_moist_unit_weight / self.param.swell_factor
         self.soil_erosion_kernel = soil_erosion_kernel(self.cell_n,
                                                        self.cell_n,
                                                        self.resolution,
@@ -555,6 +555,23 @@ class ElevationMap:
                 roll,
             )
 
+
+            if surf_points_dict is not None:
+                # Pull out the intersected inds so that erosion is not allowed to erode these cells or into them
+                # The first entry in map_inds is the map inds of the intersected cells
+                # keeping as numpy as we will have to perform numpy operations with shapely later
+                intersected_inds = np.array([map_ind[0] for map_ind in surf_points_dict['map_inds']])
+
+                # Just using T_MG1 for now to perform soil erosion. This shouldn't matter as long as our ROI is large enough
+                # The factor of 3 here is a bit of a hack to get the soil to erode more quickly since we aren't accounting for v_0
+                dT = n_steps / 60.0 * 3.0 # TODO: This should probably be passed in to the function
+                if self.param.use_soil_erosion:
+                    # Perform erosion as many times as necessary to cover the dT time interval given the maximum erosion time step
+                    while dT > 0:
+                        dt = min(dT, self.param.soil_erosion_maximum_dt)
+                        dT -= dt
+                        self.perform_soil_erosion(GET_ID, T_MG1, intersected_inds, dt)
+
             if self.param.use_soil_property_estimation and surf_points_dict is not None:
                 # Now predict the soil properties
                 sample_len = self.dz.hparams['sample_len']
@@ -601,6 +618,7 @@ class ElevationMap:
     def perform_soil_erosion(self,
                             GET_ID: str,
                             T_MG: cp._core.core.ndarray,
+                            GET_inds: cp._core.core.ndarray,
                             dt: float,
     ):
         """Perform soil erosion on the map around the current position of the blade. (different than erosion plugin)
@@ -609,24 +627,28 @@ class ElevationMap:
         Args:
             GET_ID (str):                   GET ID
             T_MG (np.ndarray)(4,4):         Transformation matrix from the GET frame to the map frame
+            GET_inds (np.ndarray)(n,2):     Indicies of the GET blade
             dt (float):                     Time step for erosion
         Returns:
             None:
         """
-        # TODO: Move most of this to GET movement
-        T_MG = cp.asarray(T_MG, dtype=self.data_type)
+
+        # Create mask of the GET blade where no erosion should occur
+        GET_mask = cp.ones((self.cell_n, self.cell_n), dtype=cp.bool_)
+        GET_mask[GET_inds[:,0], GET_inds[:,1]] = False
+
         # Account for the translation of the map origin (map_center) frame from the map frame
         # Operations are done in the map origin frame O
-        M_r_MG = T_MG[:3, 3:]
-        O_r_OG = self.shift_translation_to_map_center(M_r_MG)
-        T_OG = cp.eye(4, dtype=self.data_type)
+        M_r_MG = cp.array(T_MG[:3, 3:], dtype=self.data_type)
+        O_r_OG = self.shift_translation_to_map_center(M_r_MG).get()
+        T_OG = np.eye(4, dtype=self.data_type)
         # Extract yaw from the rotation matrix
-        r, p, y = get_ext_euler_angles(T_MG[:3,:3], xp=cp)
+        r, p, y = get_ext_euler_angles(T_MG[:3,:3], xp=np)
         # Only apply yaw rotation to ROI
-        T_OG[0, 0] = cp.cos(y)
-        T_OG[0, 1] = cp.sin(y)
-        T_OG[1, 0] = -cp.sin(y)
-        T_OG[1, 1] = cp.cos(y)
+        T_OG[0, 0] = np.cos(y)
+        T_OG[0, 1] = np.sin(y)
+        T_OG[1, 0] = -np.sin(y)
+        T_OG[1, 1] = np.cos(y)
         T_OG[:3, 3:] = O_r_OG
 
         # Define a Rectanguar ROI in frame G around the blade to perform erosion
@@ -635,70 +657,35 @@ class ElevationMap:
         dy = (self.param.erosion_ROI_dy + self.GETs[GET_ID].GET_params['blade_width'])/2.0
 
 
-        ROI_G = cp.zeros((4,4), dtype=self.data_type)
-        ROI_G[:,0] = cp.array([dx, dy, 0, 1.0])
-        ROI_G[:,1] = cp.array([dx, -dy, 0, 1.0])
-        ROI_G[:,2] = cp.array([-dx, -dy, 0, 1.0])
-        ROI_G[:,3] = cp.array([-dx, dy, 0, 1.0])
+        ROI_G = np.zeros((4,4), dtype=self.data_type)
+        ROI_G[:,0] = np.array([dx, dy, 0, 1.0])
+        ROI_G[:,1] = np.array([dx, -dy, 0, 1.0])
+        ROI_G[:,2] = np.array([-dx, -dy, 0, 1.0])
+        ROI_G[:,3] = np.array([-dx, dy, 0, 1.0])
         
         # Transform the ROI to the map origin frame
         ROI_O = T_OG @ ROI_G
-
-        # Clear the new map elevation and loose_soil layer
-        # I don't think this is necessary
-        # self.new_map[[0,7]] *= 0.0
         
         # Get the map indices of the ROI corners
         # TODO: Maybe this should be done in metric coordinates not indices to avoid rounding errors
-        ROI_inds = transform_to_map_index(ROI_O[0:2].T, self.center[0:2], self.cell_n, self.resolution)
+        ROI_inds = transform_to_map_index(ROI_O[0:2].T, self.center[0:2].get(), self.cell_n, self.resolution, xp=np)
         # Define a polygon in the map index frame that will be usd to test if a cell is within the ROI
-        ROI_poly = Polygon(ROI_inds.get())
+        ROI_poly = Polygon(ROI_inds)
         # Obtain an array of map indicies for a map aligned bounding box around the ROI
-        bnds = ROI_poly.bounds #(minx, miny, maxx, maxy)
-        # Convert to cupy int32
-        bnds = cp.array(bnds, dtype=cp.int32)
-        ROI_bbox_inds = cp.mgrid[bnds[0]:bnds[2], bnds[1]:bnds[3]]
-        # Flip the x axis inds so that we sweep through diagonals starting from the smallest x and y values and move to the largest
-        ROI_bbox_inds[0] = cp.flip(ROI_bbox_inds[0], axis=0)
-        # Loop through the cross diagonals of the bounding box and perform erosion
-        # TODO: double check this size
-        s = ROI_bbox_inds.shape
-        d_start = -(s[1] - 1)
-        d_end = s[2]
-        with self.map_lock:
-            # Loop through each array element in the bounding box
-            # TODO: Fix this to work with sampling the array as 4 sets of inds.
-            for i in range(s[1]):
-                for j in range(s[2]):
-                    ind  = ROI_bbox_inds[:,i,j]
-                    # Get the indicies that are within the ROI
-                    valid_ind= shapely.contains_xy(ROI_poly, ind[0].item(), ind[1].item())
-                    if valid_ind:
-                        # Perform erosion on the cell
-                        # e_before = self.elevation_map[0, ind[0], ind[1]].item()
-                        # indx = cp.array([ind[0]+1, ind[1]])
-                        # indy = cp.array([ind[0], ind[1]+1])
-                        # e_x_before = self.elevation_map[0, indx[0], indx[1]].item()
-                        # e_y_before = self.elevation_map[0, indy[0], indy[1]].item()
-                        self.soil_erosion_kernel(ind, dt, self.elevation_map, size=(1))
-                        # e_after = self.elevation_map[0, ind[0], ind[1]].item()
-                        # e_x_after = self.elevation_map[0, indx[0], indx[1]].item()
-                        # e_y_after = self.elevation_map[0, indy[0], indy[1]].item()
-                        # if e_before != e_after:
-                        #     print(f"Cell {ind} Eroded from {e_before} to {e_after}")
-                        #     print(f"Cell {indx} Eroded from {e_x_before} to {e_x_after}")
-                        #     print(f"Cell {indy} Eroded from {e_y_before} to {e_y_after}")
-                        #     debug = True
-        #     for d in range(d_start, d_end):
-        #         # Get the diagonal
-        #         diag_inds = cp.diagonal(ROI_bbox_inds, offset=d, axis1=1, axis2=2).T
-        #         # Get the indicies that are within the ROI
-        #         valid_diags = cp.array([shapely.contains_xy(ROI_poly, ind[0].item(), ind[1].item()) for ind in diag_inds])
-        #         if cp.all(~valid_diags):
-        #             continue
-        #         diag_inds = diag_inds[valid_diags]
-        #         # Perform erosion on the cells within the diagonal
-        #         self.soil_erosion_kernel(diag_inds, dt, self.elevation_map, size=(diag_inds.shape[0]))
+        bnds = np.array(ROI_poly.bounds, dtype=np.int32) #(minx, miny, maxx, maxy)
+        # Loop through tiled bounding boxes to avoid paralell erosion on the same cell
+        # Will go thorough 4 possible regions or smaller if the ROI is small or on the edge of the map
+        for i in range(2):
+            for j in range(2):
+                ROI_bbox_inds = np.mgrid[bnds[0]+i:bnds[2]+1:2, bnds[1]+j:bnds[3]+1:2].reshape(2,-1).T
+                # Get the indicies that are within the ROI
+                valid_inds = shapely.contains_xy(ROI_poly, ROI_bbox_inds)
+                if np.all(~valid_inds):
+                    continue
+                # Finally convert to cupy after interacting with shapely
+                ROI_bbox_inds = cp.asarray(ROI_bbox_inds[valid_inds], dtype=cp.int32)
+                # Perform erosion on the cells within the diagonal
+                self.soil_erosion_kernel(ROI_bbox_inds, dt, GET_mask, self.elevation_map, size=(ROI_bbox_inds.shape[0]))
         
     
     def get_GET_depth(self,

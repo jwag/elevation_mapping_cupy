@@ -60,21 +60,23 @@ use_chainer: false                              # Use chainer as a backend of tr
 # TODO: Tune all of these parameters
 move_dir_normal_weight: 0.5
 # TODO: Consider moving some of these parameters to the parameters.yaml file as they should be the same for all blades
-swell_factor: 1.0 # TODO: Make parameter (use something reasonable). Set to 1 for no swell
-spill_factor: 0.05 # Proporation of loose material moved during a sweep that is spilled
+swell_factor: 1.3 # TODO: Make parameter (use something reasonable). Set to 1 for no swell
+spill_factor: 0.0 # Proporation of loose material moved during a sweep that is spilled
 compacted_soil_moist_unit_weight: 14635.91630769231 # Currently set to 50% relative density of loam in Vortex
 l_fit_max: 1.0 # The maximum distance from the blade to find surface points for finding surface plane
 surf_interp_coeff: 3.0 # Parameter of exponential function weighting distance from blade for surface fit
 l_surcharge_max: 1.0 # The maximum distance from the blade to include loose soil in the surcharge calculation
 depth_weight_avg_coeff: 0.0 # Set to 0 for regular average
-max_surcharge_vol_per_unit_width: 0.3 # 0.1-0.3 seems optimal? Units of m^2. Set to -1 to disable limit. Can think about as size of pile in front of blade, e.g. blade_height*surcharge_dist_x for rectangular
+max_surcharge_vol_per_unit_width: -1.0 # 0.1-0.3 seems optimal? Units of m^2. Set to -1 to disable limit. Can think about as size of pile in front of blade, e.g. blade_height*surcharge_dist_x for rectangular
 em_FEE_max_projection_dist: 0.5 # Maximum distance to extrapolate FEE params generation from last valid em data
+use_soil_erosion: true # Use soil erosion or not
 erosion_ROI_dx: 1.5 # Length of region around blade to consider for erosion
 erosion_ROI_dy: 0.6 # Width of region around blade to consider for erosion (will be blade_width+erosion_ROI_dy)
-loose_soil_cohesion : 74.0 # TODO: Set to reasonable Value Units of Pa. Cohesion of loose soil
+loose_soil_cohesion : 50.0 # TODO: Set to reasonable Value Units of Pa. Cohesion of loose soil
 loose_soil_phi : 0.26 # TODO: Set to reasonable value Units of radians. Internal friction angle of loose soil
 # loose_soil_gamma : compacted_soil_moist_unit_weight*swell_factor
 soil_erosion_alpha_min : 0.05 # Units of radians. Minimum angle of slope to consider for erosion
+soil_erosion_maximum_dt: 0.1 # Maximum time step for erosion calculation in seconds. Making too large can cause poor behavior
 
 #### Soil Property Estimation ########
 use_soil_property_estimation: true             # Use soil property estimation or not., i.e. run the soil property estimation network and add the estimated soil properties to the map.

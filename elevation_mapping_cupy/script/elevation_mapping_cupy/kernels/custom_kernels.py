@@ -404,7 +404,7 @@ def average_map_kernel(width, height, max_variance, initial_variance):
 
 def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_min):
     soil_erosion_kernel = cp.ElementwiseKernel(
-        in_params="raw T inds, raw U dt",
+        in_params="raw T inds, raw U dt, raw B GET_mask",
         out_params="raw U map",
         preamble=string.Template(
             """
@@ -471,8 +471,9 @@ def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_m
             int idx_px = get_idx(inds[i * 2] + 1, inds[i * 2 + 1]);
             int idx_py = get_idx(inds[i * 2], inds[i * 2 + 1] + 1);
             U valid = map[get_map_idx(idx, 2)];
+            bool mask = GET_mask[idx]; // False when the GET occupies the cell
             
-            if (valid > 0.5) {
+            if (valid > 0.5 and mask) {
                 // perform slip calcuation for x direction then y direction
                 for (int j = 0; j < 2; j++) {
                     U H = map[get_map_idx(idx, 0)];
@@ -481,7 +482,8 @@ def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_m
                     U H_ = map[get_map_idx(idx_, 0)];
                     U L_ = map[get_map_idx(idx_, 7)];
                     U valid_ = map[get_map_idx(idx_, 2)];
-                    if (valid_ > 0.5) {
+                    bool mask_ = GET_mask[idx_];
+                    if (valid_ > 0.5 and mask_) {
                         // TODO: Determine if we should be using the half precision floats in this code
                         // float16 are used in the other kernels, but the functions being called here are all float32 I think
                         // https://docs.nvidia.com/cuda/cuda-math-api/group__CUDA__MATH____HALF__COMPARISON.html#group__CUDA__MATH____HALF__COMPARISON
@@ -521,15 +523,6 @@ def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_m
                         float16 alpha_star = alpha_;
                         float16 safety_ = safety_factor(alpha_star, delta_H);
                         float16 safety_min = safety_;
-                        // If alpha_max <= alpha_min minimum we assume no slip/erosion
-                        // This shouldn't be necessary since we are checking this above with delta_H_min
-                        // if (alpha_max <= ${alpha_min}) { continue; }
-                        /* Debugging negative tau and safety_factor
-                        float16 s = s_prime(alpha_star, delta_H);
-                        float16 tau = tau_prime(alpha_star, delta_H);
-                        atomicExch(&map[get_map_idx(idx_, 0)], tau);
-                        atomicExch(&map[get_map_idx(idx, 0)], .1);
-                        */
                         float16 delta_alpha = (alpha_max - ${alpha_min}) / n;
                         for (int k = 0; k < n; k++) {
                             alpha_ = ${alpha_min} + k * delta_alpha;
@@ -556,19 +549,16 @@ def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_m
                         // can be larger than the height difference.
                         // Handle this by limiting the slip height so that the the maximum slip is
                         // limited by the slip that can be attained at the minimum alpha.
-                        // TODO: Double check this logic
+                        // Even this won't fix the problem and you will get "random" spikes in the map resulting from the
+                        // entire height difference being eroded around the map.
                         float16 h_slip_max = h_slip(${alpha_min}, delta_H);
-                        //slip_h = fminf(slip_h, h_slip_max);
-                        // TODO: Re think this. Maybe make delta_H/2 so that it gets split between cells
-                        slip_h = fminf(slip_h, delta_H);
+                        slip_h = fminf(slip_h, h_slip_max);
                         // Update the height and loose_soil of both cells
-                        // TODO: Double check this logic
-                        
                         atomicAdd(&map[get_map_idx(idx, 0)], -slip_h*slip_dir);
                         atomicAdd(&map[get_map_idx(idx, 7)], -slip_h*slip_dir);
                         atomicAdd(&map[get_map_idx(idx_, 0)], slip_h*slip_dir);
                         atomicAdd(&map[get_map_idx(idx_, 7)], slip_h*slip_dir);
-                        
+                        // TODO: Update uncertainty too
                     }
                 }
             }
