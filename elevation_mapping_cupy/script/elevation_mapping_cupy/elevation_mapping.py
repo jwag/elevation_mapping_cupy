@@ -564,7 +564,7 @@ class ElevationMap:
 
                 # Just using T_MG1 for now to perform soil erosion. This shouldn't matter as long as our ROI is large enough
                 # The factor of 3 here is a bit of a hack to get the soil to erode more quickly since we aren't accounting for v_0
-                dT = n_steps / 60.0 * 3.0 # TODO: This should probably be passed in to the function
+                dT = n_steps / 60.0 * 5.0 # TODO: This should probably be passed in to the function
                 if self.param.use_soil_erosion:
                     # Perform erosion as many times as necessary to cover the dT time interval given the maximum erosion time step
                     while dT > 0:

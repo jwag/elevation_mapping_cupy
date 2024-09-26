@@ -1746,12 +1746,35 @@ class GETMovement:
                     # ["elevation": 0, "variance": 1, "is_valid": 2, "traversability": 3, "time": 4, "upper_bound": 5, "is_upper_bound": 6, "elevation_loose": 7]` 
                     # Update the variance of the cells. Using simple variance update for now
                     start_var = submap[1, intersected_cells[:,0], intersected_cells[:,1]].copy()
-                    submap[1, intersected_cells[:,0], intersected_cells[:,1]] += var_h
+                    # Compute an updated variance based on the change in elevation
+                    # The idea here is that the standard deviation of the existing cell height should be reduced by the change in height
+                    # The choice of 1 sigma is a bit arbitrary, but it is a reasonable starting point
+                    # If the change in height is greater than the 1-sigma bound then the existing variance is set to 0
+                    # The variance of the cell is then updated based on the remaining variance and the variance of the blade height
+                    # The maximum of the two is taken as the new variance
+                    remaining_h_std = np.maximum((np.sqrt(start_var) - delta_h), 0.0)
+                    submap[1, intersected_cells[:,0], intersected_cells[:,1]] = np.maximum(remaining_h_std, np.sqrt(var_h))**2
                     # Update the upper bound of the overlapping cells (set to the updated elevation)
                     submap[5, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
                     # Update the is_upper_bound status of the cells
                     submap[6, intersected_cells[:,0], intersected_cells[:,1]] = 0.0
 
+                    # Compute the change in surcharge over the sweep prior to dealing with errors in deposit locations
+                    # in the deposited locations
+                    compact_swelled_moved = compact_moved*self.param.swell_factor
+                    loose_spilled = loose_moved * self.param.spill_factor
+                    dV_Q = self.compute_delta_surcharge(loose_remaining, compact_swelled_moved, loose_spilled, resolution)
+                    delta_h_swelled = compact_moved*self.param.swell_factor + loose_moved - loose_spilled
+
+                    # Compute the range of possible changes in elevaiton at the deposit location given the standard deviations of the blade height and the cell height
+                    # The lower portion of the range is given by the change in cell height plus the blade height standard deviation
+                    # The upper portion of the range can be one of 3 values:
+                    # 1. The standard deviation of the cell height
+                    # 2. The change in cell height due to swell
+                    # 3. The standard deviation of the blade height minus the change in cell height (minimum of 0 if negative)
+                    # Which ever of these is the largest is used as the upper bound as it the highest possible value of the soil in the deposited cell for a 1 sigma bound
+                    deposit_delta_std_h = (delta_h + np.sqrt(var_h) + np.max([np.sqrt(start_var), delta_h_swelled - delta_h, np.maximum(np.sqrt(var_h)-delta_h, 0.0)]))/2.0
+                    deposit_delta_var_h = deposit_delta_std_h**2
                     # Deposit the material in the a new location
                     # Find where to deposit the material based on the movement direction
                     deposit_inds = self.find_deposit_locations(intersected_cells, move_dir, submap.shape[1:3])
@@ -1767,33 +1790,23 @@ class GETMovement:
                             dup_inds = np.arange(deposit_inds.shape[0])
                             dup_inds = dup_inds[np.all(dup == deposit_inds, axis=1)]
                             # dup_inds[0] should be the first index of the duplicates and in the unique_inds
-                            compact_moved[dup_inds[0]] += compact_moved[dup_inds[1:]].sum()
-                            loose_moved[dup_inds[0]] += loose_moved[dup_inds[1:]].sum()
-                            start_var[dup_inds[0]] += start_var[dup_inds[1:]].sum()
+                            delta_h_swelled[dup_inds[0]] += delta_h_swelled[dup_inds[1:]].sum()
+                            deposit_delta_var_h[dup_inds[0]] += deposit_delta_var_h[dup_inds[1:]].sum()
                         # Now update deposit_inds
                         deposit_inds = unique_deposit_inds
                         # And remove the non-unique elements from the moved arrays
-                        compact_moved = compact_moved[unique_inds]
-                        loose_moved = loose_moved[unique_inds]
-                        start_var = start_var[unique_inds]
-                    # Compute the change in surcharge over the sweep prior to dealing with errors
-                    # in the deposited locations
-                    compact_swelled_moved = compact_moved*self.param.swell_factor
-                    loose_spilled = loose_moved * self.param.spill_factor
-                    dV_Q = self.compute_delta_surcharge(loose_remaining, compact_swelled_moved, loose_spilled, resolution)
+                        delta_h_swelled = delta_h_swelled[unique_inds]
+                        deposit_delta_var_h = deposit_delta_var_h[unique_inds]
+                    # Check if the deposit locations are valid
                     valid_deposit_inds = submap[2, deposit_inds[:,0], deposit_inds[:,1]] > 0.5
                     # Handle case where the material is deposited outside the valid portion of the map
                     # a deposition locaiton may need to be a a cell that is within the map,
                     if not np.all(valid_deposit_inds):
                         warnings.warn("Some deposit locations are not valid. Material not conseved")
                         deposit_inds = deposit_inds[valid_deposit_inds]
-                        # pierce_dist = pierce_dist[valid_deposit_inds]
-                        compact_moved = compact_moved[valid_deposit_inds]
-                        loose_moved = loose_moved[valid_deposit_inds]
-                        loose_spilled = loose_spilled[valid_deposit_inds]
-                        start_var = start_var[valid_deposit_inds]
+                        delta_h_swelled = delta_h_swelled[valid_deposit_inds]
+                        deposit_delta_var_h = deposit_delta_var_h[valid_deposit_inds]
                     # Deposit the material in the new location for elevation and loose material
-                    delta_h_swelled = compact_moved*self.param.swell_factor + loose_moved - loose_spilled
                     # If swell factor is 1 then should be equal to pierce_dist
                     submap[0, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled
                     submap[7, deposit_inds[:,0], deposit_inds[:,1]] += delta_h_swelled
@@ -1801,7 +1814,7 @@ class GETMovement:
                     # TODO: Review this method and compare to d'Adamo pg. 114 
                     # Should the pierce_dist factor in here?
                     # submap[1, deposit_inds[:,0], deposit_inds[:,1]] += var_h * self.param.swell_factor**2 
-                    submap[1, deposit_inds[:,0], deposit_inds[:,1]] += var_h + delta_h_swelled**2 + start_var
+                    submap[1, deposit_inds[:,0], deposit_inds[:,1]] += deposit_delta_var_h
                     # Update the upper bound
                     submap[5, deposit_inds[:,0], deposit_inds[:,1]] = submap[0, deposit_inds[:,0], deposit_inds[:,1]]
                     # Update the is_upper_bound status of the cells

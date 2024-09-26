@@ -558,7 +558,21 @@ def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_m
                         atomicAdd(&map[get_map_idx(idx, 7)], -slip_h*slip_dir);
                         atomicAdd(&map[get_map_idx(idx_, 0)], slip_h*slip_dir);
                         atomicAdd(&map[get_map_idx(idx_, 7)], slip_h*slip_dir);
-                        // TODO: Update uncertainty too
+                        // Update variance as well
+                        // Distribute standard deviation based on the slip height
+                        if (slip_dir == 1) {
+                            float16 erode_slip_std = fmaxf(sqrtf(map[get_map_idx(idx, 1)])-slip_h, 0.0);
+                            atomicExch(&map[get_map_idx(idx, 1)], erode_slip_std * erode_slip_std);
+                            float16 slip_std = sqrtf(map[get_map_idx(idx_, 1)]) + slip_h;
+                            atomicExch(&map[get_map_idx(idx_, 1)], slip_std * slip_std);
+                        }
+                        else {
+                            float16 erode_slip_std = fmaxf(sqrtf(map[get_map_idx(idx_, 1)])-slip_h, 0.0);
+                            atomicExch(&map[get_map_idx(idx_, 1)], erode_slip_std * erode_slip_std);
+                            //atomicAdd(&map[get_map_idx(idx, 1)], deposit_slip_v);
+                            float16 slip_std = sqrtf(map[get_map_idx(idx, 1)]) + slip_h;
+                            atomicExch(&map[get_map_idx(idx, 1)], slip_std * slip_std);
+                        }
                     }
                 }
             }
