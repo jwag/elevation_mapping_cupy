@@ -15,67 +15,62 @@ import yaml
 @dataclass
 class Parameter(Serializable):
     """
-      
-
+      This class holds the parameters for the elevation mapping algorithm.
+    
     Attributes:
-ibu                         (Default: ``0.04``)
+        resolution: The resolution in meters.
+                    (Default: ``0.04``)
         subscriber_cfg: The configuration for the subscriber.
                         (Default: ``{ "front_cam": { "channels": ["rgb", "person"], "topic_name": "/elevation_mapping/pointcloud_semantic", "data_type": "pointcloud", } }``)
- meters        additional_layers: The additional layers for the map.  
-   (Defa                           (Default: ``["rgb"]``)
+        additional_layers: The additional layers for the map.  
+                           (Default: ``["rgb"]``)
         fusion_algorithms: The list of fusion algorithms.  
-    additi                           (Default: ``[ "image_color", "image_exponential", "pointcloud_average", "pointcloud_bayesian_inference", "pointcloud_class_average", "pointcloud_class_bayesian", "pointcloud_class_max", "pointcloud_color", ]``)
-       (Def        pointcloud_channel_fusions: The fusion for pointcloud channels.  
-The list of                                    (Default: ``{"rgb": "color", "default": "class_average"}``)
+                           (Default: ``[ "image_color", "image_exponential", "pointcloud_average", "pointcloud_bayesian_inference", "pointcloud_class_average", "pointcloud_class_bayesian", "pointcloud_class_max", "pointcloud_color", ]``)
+        pointcloud_channel_fusions: The fusion for pointcloud channels.  
+                                   (Default: ``{"rgb": "color", "default": "class_average"}``)
         GET_channel_fusions: The fusion for GET channels.
-channels.                            (Default: ``{"default": "latest"}``)
-       (Default        image_channel_fusions: The fusion for image channels.  
-                                               (Default: ``{"rgb": "color", "default": "exponential"}``)
-type for the map.        data_type: The data type for the map.  
-ault: ``np.float32                   (Default: ``np.float32``)
- for the average fu        average_weight: The weight for the average fusion.  
+                            (Default: ``{"default": "latest"}``)
+        image_channel_fusions: The fusion for image channels.  
+                               (Default: ``{"rgb": "color", "default": "exponential"}``)
+        data_type: The data type for the map.  
+                   (Default: ``np.float32``)
+        average_weight: The weight for the average fusion.  
                         (Default: ``0.5``)
-  (Default: ``0.5``)        map_length: The map's size in meters.  
-: The map's size in me                    (Default: ``8.0``)
-
-                     sensor_noise_fa                            (Default: ``0.05``)
-sensor_noise_factor: The                                (Default: ``2.0``)
-noise_factor*z^2 (z is distance from sensor).  
+        map_length: The map's size in meters.  
+                    (Default: ``8.0``)
+        sensor_noise_factor: The point's noise is sensor_noise_factor*z^2 (z is distance from sensor).  
+                            (Default: ``0.05``)
+        mahalanobis_thresh: Points outside this distance is outlier.  
+                            (Default: ``2.0``)
         outlier_variance: If point is outlier, add this value to the cell.  
-s distance is outlier.                            (        drift_compensation_variance_inlier: Cells under this value is used for drift compensation.  
-
-                                            time_variance: Add this value when update_variance is called.  
-iance: If point is outlier,                        (Default: ``0.01``)
-  (Default: ``0.01``)
-        drif        time_interva                       (Default: ``0.1``)
-is value is used for drift compensation.  
-                                   max_variance: The maximum variance for each cell.  
- Add this value when update_var                       (Default: ``1.0``)
-(Default: ``0.01``)
-            dilation_size: The dilation filter size before traversability filter.  
-with this interval.  
-                                           dilation_size_initialize: The dilation size after the init.  
-iance: The maximum variance for ea           drift_compensation_alpha: The drift compensation alpha for smoother update of drift compensation.  
-     (Default: ``1.0``)                                  (Default: ``1.0        traversability_inlier: Cells with higher traversability are used for drift compensation.  
-ty filter.  
-                       (Defau                               (Default: ``0.1``)
-e: The dilation size after the init.                                (Default: ``100``)
-
-                                  min_height_drift_cnt: Drift compensation only happens if the valid cells are more than this number.  
-ompensation_alpha: The drift compensatio                              (Default: ``100``)
-ersability_inlier: Cells with higher traversability are used for drift compensation.  
-                 max_ray                        (Default: ``2.0``)
-l_num_thresh: If there are more points than this value, only higher points than the current height are used to make the wall more sharp.  
-                 cleanup_ste                      (Default: ``0.01``)
-height_drift_cnt: Drift compensation only happens if the valid cells are more than this number.  
-           cleanup_cos_thresh: Substitute this value from validity layer at visibility cleanup.  
-efault: ``2.0``)
-        cleanup_step: Substi           min_valid_distance: Points with shorter distance will be filtered out.  
-ility cleanup.  
-                      (Default: ``0.01``)                                 max_height_range: Points higher than this value from sensor will be filtered out to disable ceiling.  
-yer at visibility cleanup.  
-                                    ramped_height_range_a: If z > max(d - ramped_height_range_b, 0) * ramped_height_range_a + ramped_height_range_c, reject.  
-ce: Points with shorter distance will be filtered out.  
+                          (Default: ``0.01``)
+        drift_compensation_variance_inlier: Cells under this value is used for drift compensation.  
+                                           (Default: ``0.1``)
+        variance_inflation_rate: Update the variance at this rate (m^2/s) to compensate for uncertainty due to drift.
+                       (Default: ``0.01``)
+        time_interval: Time layer is updated at this interval.  
+                       (Default: ``0.1``)
+        max_variance: The maximum variance for each cell.  
+                       (Default: ``1.0``)
+        dilation_size: The dilation filter size before traversability filter.  
+                       (Default: ``2``)
+        dilation_size_initialize: The dilation size after the init.  
+                                  (Default: ``10``)
+        drift_compensation_alpha: The drift compensation alpha for smoother update of drift compensation.  
+                                  (Default: ``1.0``)
+        traversability_inlier: Cells with higher traversability are used for drift compensation.  
+                               (Default: ``0.1``)
+        wall_num_thresh: If there are more points than this value, only higher points than the current height are used to make the wall more sharp.  
+                         (Default: ``100``)
+        min_height_drift_cnt: Drift compensation only happens if the valid cells are more than this number.  
+                              (Default: ``100``)
+        max_ray_length: The maximum length for ray tracing.  
+                        (Default: ``2.0``)
+        cleanup_step: Substitute this value from validity layer at visibility cleanup.  
+                      (Default: ``0.01``)
+        cleanup_cos_thresh: Substitute this value from validity layer at visibility cleanup.  
+                            (Default: ``0.5``)
+        min_valid_distance: Points with shorter distance will be filtered out.  
                             (Default: ``0.3``)
         max_height_range: Points higher than this value from sensor will be filtered out to disable ceiling.  
                            (Default: ``1.0``)
@@ -229,8 +224,8 @@ ce: Points with shorter distance will be filtered out.
     mahalanobis_thresh: float = 2.0  # points outside this distance is outlier.
     outlier_variance: float = 0.01  # if point is outlier, add this value to the cell.
     drift_compensation_variance_inlier: float = 0.1  # cells under this value is used for drift compensation.
-    time_variance: float = 0.01  # add this value when update_variance is called.
-    time_interval: float = 0.1  # Time layer is updated with this interval.
+    variance_inflation_rate: float = 0.01  # update the variance at this rate (m^2/s) to compensate for uncertainty due to drift.
+    time_interval: float = 0.1  # Time layer is updated at this interval.
 
     max_variance: float = 1.0  # maximum variance for each cell.
     dilation_size: float = 2  # dilation filter size before traversability filter.

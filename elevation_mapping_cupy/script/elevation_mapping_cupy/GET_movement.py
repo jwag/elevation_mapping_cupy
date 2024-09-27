@@ -1754,6 +1754,8 @@ class GETMovement:
                     # The maximum of the two is taken as the new variance
                     remaining_h_std = np.maximum((np.sqrt(start_var) - delta_h), 0.0)
                     submap[1, intersected_cells[:,0], intersected_cells[:,1]] = np.maximum(remaining_h_std, np.sqrt(var_h))**2
+                    # TODO: Consider updating the time layer here as well. Do we that layer to only be for lidar observations, or also for GET updates?
+                    submap[4, intersected_cells[:,0], intersected_cells[:,1]] = 0.0
                     # Update the upper bound of the overlapping cells (set to the updated elevation)
                     submap[5, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
                     # Update the is_upper_bound status of the cells
@@ -1815,6 +1817,8 @@ class GETMovement:
                     # Should the pierce_dist factor in here?
                     # submap[1, deposit_inds[:,0], deposit_inds[:,1]] += var_h * self.param.swell_factor**2 
                     submap[1, deposit_inds[:,0], deposit_inds[:,1]] += deposit_delta_var_h
+                    # TODO: Consider updating the time layer here as well.
+                    submap[4, deposit_inds[:,0], deposit_inds[:,1]] = 0.0
                     # Update the upper bound
                     submap[5, deposit_inds[:,0], deposit_inds[:,1]] = submap[0, deposit_inds[:,0], deposit_inds[:,1]]
                     # Update the is_upper_bound status of the cells

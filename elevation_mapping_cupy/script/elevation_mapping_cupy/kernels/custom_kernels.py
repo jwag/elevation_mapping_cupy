@@ -165,10 +165,14 @@ def add_points_kernel(
                     U map_h = map[get_map_idx(idx, 0)];
                     U map_v = map[get_map_idx(idx, 1)];
                     U num_points = newmap[get_map_idx(idx, 4)];
+                    // TODO: Malhalanobis should be times map std not variance
                     if (abs(map_h - z) > (map_v * ${mahalanobis_thresh})) {
                         atomicAdd(&map[get_map_idx(idx, 1)], ${outlier_variance});
                     }
                     else {
+                        // TODO: Not following this logic. Also shouldn't it be before the mahalanobis check as stated in the paper? Why are there no abs here?
+                        // No abs because we only want to update the height if it is above the map at this cell because we are saying it is a wall
+                        // TODO: Malhalanobis should be times map std not variance
                         if (${enable_edge_shaped} && (num_points > ${wall_num_thresh}) && (z < map_h - map_v * ${mahalanobis_thresh} / num_points)) {
                           // continue;
                         }
@@ -181,19 +185,12 @@ def add_points_kernel(
                                 // If the map was occupied before, update the map using the filter update rule
                                 new_h = (map_h * v + z * map_v) / (map_v + v);
                                 new_v = (map_v * v) / (map_v + v);
-                                // Only update the loose elevation if the map was occupied before
-                                // If new point is above the existing map, add the difference to the loose elevation
-                                // If below then remove the difference from the loose elevation
-                                // TODO think about old loose height vs new loose height...
-                                T delta_loose = new_h - map_h;
-                                // Loose elevation can only be positive
-                                delta_loose = max(-map[get_map_idx(idx, 7)], delta_loose);
-                                // TODO: Could make this update loose only if user wants to. May be useful if we have poor localization
-                                atomicAdd(&newmap[get_map_idx(idx, 7)], delta_loose);
                             }
                             atomicAdd(&newmap[get_map_idx(idx, 0)], new_h);
                             atomicAdd(&newmap[get_map_idx(idx, 1)], new_v);
                             atomicAdd(&newmap[get_map_idx(idx, 2)], 1.0);
+                            // Set loose to 0 if the map was not occupied before
+                            //atomicExch(&newmap[get_map_idx(idx, 7)], 0.0);
                             // Time layer
                             map[get_map_idx(idx, 4)] = 0.0;
                             // Upper bound
@@ -243,8 +240,10 @@ def add_points_kernel(
                       continue;
                     }
                     // If updated recently, skip
+                    // TODO: This non_updated threshold seems like it should be a parameter
                     if (non_updated_t < 0.5) {continue;}
 
+                    // This condition seems arbitrary.
                     if (nmap_h > nz + 0.01 - min(nmap_v, 1.0) * 0.05) {
                         // If ray and norm is vertical, skip
                         U norm_x = norm_map[get_map_idx(nidx, 0)];
@@ -253,11 +252,30 @@ def add_points_kernel(
                         float product = inner_product(ray_x, ray_y, ray_z, norm_x, norm_y, norm_z);
                         if (fabs(product) < ${cleanup_cos_thresh}) {continue;}
                         U num_points = newmap[get_map_idx(nidx, 3)];
+                        // TODO: This non_updated threshold seems like it should be a parameter
+                        // I think this statement is saying that if we have wall_num_thresh points in the cell from this pointcloud alone
+                        // then this must be a wall. So we don't want to clear the cell.
                         if (num_points > ${wall_num_thresh} && non_updated_t < 1.0) {continue;}
 
                         // Finally, this cell is penetrated by the ray.
+                        // TODO: by normalizing by ray_length the cleanup_step will also have to be changed if max_ray_length is changed
+                        // This is not ideal when it comes to tuning. Consider revising this.
+                        // Reduce the validity of the cell? I guess the idea is that the closer the cell is to the sensor,
+                        // the more confident we don't know the true height of the cell because of the angle of the ray.
+                        // For example if a ray that clears a cell close the sensor then we can assume that the cell was a dynamic object
+                        // and we then don't just want to reduce the height of the cell, but also the validity of the cell.
+                        // and vice versa. If a ray clears a cell far away from the sensor, then we can assume that then we don't know if that
+                        // is because of drift and noise or because of a dynamic object. So we just reduce the height of the cell.??
                         atomicAdd(&map[get_map_idx(nidx, 2)], -${cleanup_step}/(ray_length / ${max_ray_length}));
                         atomicAdd(&map[get_map_idx(nidx, 1)], ${outlier_variance});
+                        // Also update the elevation and loose elevaiton layers given the upper bound
+                        // TODO: RESUME HERE!!! Think this through. do we want to be treating ray penetration as an observation for a cell?
+                        // Think about this in combination with fixing malhananobis stuff
+                        atomicExch(&map[get_map_idx(nidx, 0)], nz);
+                        U delta_loose_vis = nz - nmap_h;
+                        // Loose elevation can only be positive
+                        delta_loose_vis = fmaxf(-map[get_map_idx(nidx, 7)], delta_loose_vis);
+                        atomicAdd(&map[get_map_idx(nidx, 7)], delta_loose_vis);
                         // Do upper bound check.
                         if (nz < nmap_upper || nmap_is_upper < 0.5) {
                             map[get_map_idx(nidx, 5)] = nz;
@@ -339,8 +357,10 @@ def error_counting_kernel(
                 T e = z - map_h;
                 atomicAdd(&error[0], e);
                 atomicAdd(&error_cnt[0], 1);
+                // So index 3 of newmap is the number of points that will be processed to update the cell
                 atomicAdd(&newmap[get_map_idx(idx, 3)], 1.0);
             }
+            // And index 4 of the newmap is the total number of points that land in the cell
             atomicAdd(&newmap[get_map_idx(idx, 4)], 1.0);
             """
         ).substitute(
@@ -369,6 +389,7 @@ def average_map_kernel(width, height, max_variance, initial_variance):
             """
             U h = map[get_map_idx(i, 0)];
             U v = map[get_map_idx(i, 1)];
+            U loose = map[get_map_idx(i, 7)];
             U new_h = newmap[get_map_idx(i, 0)];
             U new_v = newmap[get_map_idx(i, 1)];
             U new_cnt = newmap[get_map_idx(i, 2)];
@@ -386,6 +407,17 @@ def average_map_kernel(width, height, max_variance, initial_variance):
                     map[get_map_idx(i, 2)] = 1;
                     // Also update the loose elevation with the average change
                     map[get_map_idx(i, 7)] += newmap[get_map_idx(i, 7)]/new_cnt;
+                    U valid = map[get_map_idx(i, 2)];
+                    if (valid > 0.5) {
+                        // Only update the loose elevation if the map was occupied before
+                        // If new point is above the existing map, add the difference to the loose elevation
+                        // If below then remove the difference from the loose elevation
+                        U delta_loose = new_h / new_cnt - h;
+                        // Loose elevation can only be positive
+                        delta_loose = fmaxf(-loose, delta_loose);
+                        // TODO: Could make this update loose only if user wants to. May be useful if we have poor localization
+                        atomicAdd(&map[get_map_idx(i, 7)], delta_loose);
+                    }
                 }
             }
             U valid = map[get_map_idx(i, 2)];

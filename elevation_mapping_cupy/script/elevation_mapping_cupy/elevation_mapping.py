@@ -492,13 +492,18 @@ class ElevationMap:
         """
         return self.additive_mean_error
 
-    def update_variance(self):
-        """Adds the time variacne to the valid cells."""
-        self.elevation_map[1] += self.param.time_variance * self.elevation_map[2]
+    def update_variance(self, dt):
+        """Increase the variance of the valid cells at the rate specified"""
+        with self.map_lock:
+            # Ideally we would use the time layer to do this update, but that would require clearing the time layer after
+            # increasing the variance. We don't want to do that because the time layer should be increasing until
+            # a cell is updated with a new measurement. Therefore we instead require that the caller provides the time elapsed
+            self.elevation_map[1] += self.param.variance_inflation_rate * dt * self.elevation_map[2]
 
-    def update_time(self):
-        """adds the time interval to the time layer."""
-        self.elevation_map[4] += self.param.time_interval
+    def update_time(self, dt):
+        """adds the time elapsed to the time layer. Function is should be called at rate of 1/time_interval approximately"""
+        with self.map_lock:
+            self.elevation_map[4] += dt
 
     def update_upper_bound_with_valid_elevation(self):
         """Filters all invalid cell's upper_bound and is_upper_bound layers."""
@@ -556,21 +561,23 @@ class ElevationMap:
             )
 
 
-            if surf_points_dict is not None:
+            if surf_points_dict is None:
+                intersected_inds = None
+            else:
                 # Pull out the intersected inds so that erosion is not allowed to erode these cells or into them
                 # The first entry in map_inds is the map inds of the intersected cells
                 # keeping as numpy as we will have to perform numpy operations with shapely later
                 intersected_inds = np.array([map_ind[0] for map_ind in surf_points_dict['map_inds']])
 
-                # Just using T_MG1 for now to perform soil erosion. This shouldn't matter as long as our ROI is large enough
-                # The factor of 3 here is a bit of a hack to get the soil to erode more quickly since we aren't accounting for v_0
-                dT = n_steps / 60.0 * 5.0 # TODO: This should probably be passed in to the function
-                if self.param.use_soil_erosion:
-                    # Perform erosion as many times as necessary to cover the dT time interval given the maximum erosion time step
-                    while dT > 0:
-                        dt = min(dT, self.param.soil_erosion_maximum_dt)
-                        dT -= dt
-                        self.perform_soil_erosion(GET_ID, T_MG1, intersected_inds, dt)
+            # Just using T_MG1 for now to perform soil erosion. This shouldn't matter as long as our ROI is large enough
+            # The factor of 3 here is a bit of a hack to get the soil to erode more quickly since we aren't accounting for v_0
+            dT = n_steps / 60.0 * 5.0 # TODO: This should probably be passed in to the function
+            if self.param.use_soil_erosion:
+                # Perform erosion as many times as necessary to cover the dT time interval given the maximum erosion time step
+                while dT > 0:
+                    dt = min(dT, self.param.soil_erosion_maximum_dt)
+                    dT -= dt
+                    self.perform_soil_erosion(GET_ID, T_MG1, intersected_inds, dt)
 
             if self.param.use_soil_property_estimation and surf_points_dict is not None:
                 # Now predict the soil properties
@@ -635,7 +642,8 @@ class ElevationMap:
 
         # Create mask of the GET blade where no erosion should occur
         GET_mask = cp.ones((self.cell_n, self.cell_n), dtype=cp.bool_)
-        GET_mask[GET_inds[:,0], GET_inds[:,1]] = False
+        if GET_inds is not None:
+            GET_mask[GET_inds[:,0], GET_inds[:,1]] = False
 
         # Account for the translation of the map origin (map_center) frame from the map frame
         # Operations are done in the map origin frame O
