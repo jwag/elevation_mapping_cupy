@@ -165,16 +165,16 @@ def add_points_kernel(
                 if (is_inside(idx)) {
                     U map_h = map[get_map_idx(idx, 0)];
                     U map_v = map[get_map_idx(idx, 1)];
+                    U map_std = sqrtf(map_v);
                     U num_points = newmap[get_map_idx(idx, 4)];
-                    // TODO: Malhalanobis should be times map std not variance
-                    if (abs(map_h - z) > (map_v * ${mahalanobis_thresh})) {
+                    // Points that are too far from the map in terms of the mahalanobis distance are considered outliers
+                    if (abs(map_h - z) > (map_std * ${mahalanobis_thresh})) {
                         atomicAdd(&map[get_map_idx(idx, 1)], ${outlier_variance});
                     }
                     else {
                         // TODO: Not following this logic. Also shouldn't it be before the mahalanobis check as stated in the paper? Why are there no abs here?
                         // No abs because we only want to update the height if it is above the map at this cell because we are saying it is a wall
-                        // TODO: Malhalanobis should be times map std not variance
-                        if (${enable_edge_shaped} && (num_points > ${wall_num_thresh}) && (z < map_h - map_v * ${mahalanobis_thresh} / num_points)) {
+                        if (${enable_edge_shaped} && (num_points > ${wall_num_thresh}) && (z < map_h - map_std * ${mahalanobis_thresh} / num_points)) {
                           // continue;
                         }
                         else {
@@ -363,9 +363,10 @@ def error_counting_kernel(
             }
             U map_h = map[get_map_idx(idx, 0)];
             U map_v = map[get_map_idx(idx, 1)];
+            U map_std = sqrtf(map_v);
             U map_valid = map[get_map_idx(idx, 2)];
             U map_t = map[get_map_idx(idx, 3)];
-            if (map_valid > 0.5 && (abs(map_h - z) < (map_v * ${mahalanobis_thresh}))
+            if (map_valid > 0.5 && (abs(map_h - z) < (map_std * ${mahalanobis_thresh}))
                 && map_v < ${outlier_variance} / 2.0
                 && map_t > ${traversability_inlier}) {
                 T e = z - map_h;

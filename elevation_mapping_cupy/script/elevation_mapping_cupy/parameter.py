@@ -40,7 +40,7 @@ class Parameter(Serializable):
                     (Default: ``8.0``)
         sensor_noise_factor: The point's noise is sensor_noise_factor*z^2 (z is distance from sensor).  
                             (Default: ``0.05``)
-        mahalanobis_thresh: Points outside this distance is outlier.  
+        mahalanobis_thresh: Points outside this number of standard deviations are considered outliers.
                             (Default: ``2.0``)
         outlier_variance: If point is outlier, add this value to the cell.  
                           (Default: ``0.01``)
