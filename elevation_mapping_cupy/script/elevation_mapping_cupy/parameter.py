@@ -104,6 +104,8 @@ class Parameter(Serializable):
                                    (Default: ``True``)
         enable_visibility_cleanup: Enable visibility cleanup.  
                                    (Default: ``True``)
+        enable_visibility_height_update: Enable updating elevation and loose soil heights using the the upper bound from the ray trace.
+                                            (Default: ``False``)
         enable_overlap_clearance: Enable overlap clearance.  
                                   (Default: ``True``)
         use_only_above_for_upper_bound: Use only above for upper bound.  
@@ -261,6 +263,7 @@ class Parameter(Serializable):
     enable_edge_sharpen: bool = True  # enable edge sharpening
     enable_drift_compensation: bool = True  # enable drift compensation
     enable_visibility_cleanup: bool = True  # enable visibility cleanup
+    enable_visibility_height_update: bool = False  # enable updating elevation and loose soil heights using the the upper bound from the ray trace.
     enable_overlap_clearance: bool = True  # enable overlap clearance
     use_only_above_for_upper_bound: bool = True  # use only above for upper bound
     use_chainer: bool = True  # use chainer as a backend of traversability filter or pytorch. If false, it uses pytorch. pytorch requires ~2GB more GPU memory compared to chainer but runs faster.

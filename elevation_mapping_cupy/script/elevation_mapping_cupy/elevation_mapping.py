@@ -304,6 +304,7 @@ class ElevationMap:
             self.param.ramped_height_range_c,
             self.param.enable_edge_sharpen,
             self.param.enable_visibility_cleanup,
+            self.param.enable_visibility_height_update,
         )
         self.error_counting_kernel = error_counting_kernel(
             self.resolution,

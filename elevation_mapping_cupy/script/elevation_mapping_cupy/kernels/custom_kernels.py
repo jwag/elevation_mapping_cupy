@@ -136,6 +136,7 @@ def add_points_kernel(
     ramped_height_range_c,
     enable_edge_shaped=True,
     enable_visibility_cleanup=True,
+    enable_visibility_height_update=False,
 ):
     add_points_kernel = cp.ElementwiseKernel(
         in_params="raw U center_x, raw U center_y, raw U R, raw U t, raw U var_h, raw U norm_map",
@@ -201,6 +202,8 @@ def add_points_kernel(
                     }
                 }
             }
+            // TODO: Consider separating the clearing from the marking of the points.
+            // Would allow for better handling of multiple rays passing through a single cell
             if (${enable_visibility_cleanup}) {
                 float16 ray_x, ray_y, ray_z;
                 float16 ray_length = ray_vector(t[0], t[1], t[2], x, y, z, ray_x, ray_y, ray_z);
@@ -269,13 +272,23 @@ def add_points_kernel(
                         atomicAdd(&map[get_map_idx(nidx, 2)], -${cleanup_step}/(ray_length / ${max_ray_length}));
                         atomicAdd(&map[get_map_idx(nidx, 1)], ${outlier_variance});
                         // Also update the elevation and loose elevaiton layers given the upper bound
-                        // TODO: RESUME HERE!!! Think this through. do we want to be treating ray penetration as an observation for a cell?
-                        // Think about this in combination with fixing malhananobis stuff
-                        atomicExch(&map[get_map_idx(nidx, 0)], nz);
-                        U delta_loose_vis = nz - nmap_h;
-                        // Loose elevation can only be positive
-                        delta_loose_vis = fmaxf(-map[get_map_idx(nidx, 7)], delta_loose_vis);
-                        atomicAdd(&map[get_map_idx(nidx, 7)], delta_loose_vis);
+                        // This is useful for GET mapping given that our erosion model is imperfect and given the placement of
+                        // a LiDAR the back side of the pile is obscured. This way we can update the elevation of the obscured side
+                        // and improve the estimation of surcharge.
+                        // TODO: If we have multiple rays passing through a cell, in a single cloud then this can get messy as it is happing in parallel.
+                        // Splitting the ray clearing and the marking of the points could allow for better handling of multiple rays passing through a single cell.
+                        // by using the newmap array cleverly.
+                        if (${enable_visibility_height_update}) {
+                            // The min and max here use the map array directly instead of nmap_h to more mitigate
+                            // the issue of the map being updated in parallel by multiple rays.
+                            // The write operations are atomic, but the min and max operations are not so there still could be some issues.
+                            // Loose elevation can only be positive
+                            U n_loose = fmaxf( map[get_map_idx(nidx, 7)] - (map[get_map_idx(nidx, 0)] - nz), 0.0);
+                            atomicExch(&map[get_map_idx(nidx, 7)], n_loose);
+                            // Update the height of the cell with the upper bound
+                            U new_h = fminf(map[get_map_idx(nidx, 0)], nz);
+                            atomicExch(&map[get_map_idx(nidx, 0)], new_h);
+                        }
                         // Do upper bound check.
                         if (nz < nmap_upper || nmap_is_upper < 0.5) {
                             map[get_map_idx(nidx, 5)] = nz;
@@ -298,6 +311,7 @@ def add_points_kernel(
             cleanup_cos_thresh=cleanup_cos_thresh,
             enable_edge_shaped=int(enable_edge_shaped),
             enable_visibility_cleanup=int(enable_visibility_cleanup),
+            enable_visibility_height_update=int(enable_visibility_height_update),
         ),
         name="add_points_kernel",
     )
