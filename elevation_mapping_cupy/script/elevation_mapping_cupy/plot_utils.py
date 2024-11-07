@@ -191,7 +191,7 @@ def surf_elev_map_plot(elev, layer_color, layer_color_name, cell_n, resolution, 
    ax.set_box_aspect([xrange, yrange, z_scale*zrange])
 
 # TODO: Add plot to show loose soil on top of the elevation map
-def bar_elev_map_plot(elev, layer_color, layer_color_name, true_cell_n, resolution, offset, colormap='Spectral', scale_mode="z_fit", layer_color_rng=[None,None], layer_truth_str=None):
+def bar_elev_map_plot(elev, elev_name, layer_color, layer_color_name, true_cell_n, resolution, offset, colormap='Spectral', scale_mode="z_fit", layer_color_rng=[None,None], layer_truth_str=None):
       """
       Plot a 3D bar plot of the elevation map. Colors are determined by the layer_color map
       which could be variance, or some other value. This plot is not interpolated and shows the
@@ -199,6 +199,7 @@ def bar_elev_map_plot(elev, layer_color, layer_color_name, true_cell_n, resoluti
 
       Args:
          elev: 2D numpy array of elevation values
+         elev_name: Name of the elevation values for the title of the plot
          layer_color: 2D numpy array of values to determine the color of the surface plot
          layer_color_name: Name of the layer_color values for the colorbar
          cell_n: Number of cells in the x and y direction (true numbers not padded)
@@ -248,7 +249,7 @@ def bar_elev_map_plot(elev, layer_color, layer_color_name, true_cell_n, resoluti
       mappable = cm.ScalarMappable(norm=norm, cmap=cmap)
       mappable.set_array(layer_color[valid])
       fig.colorbar(mappable, ax=ax, shrink=0.5)
-      title  = 'Elevation Map with ' + layer_color_name + ' Color'
+      title  = elev_name + ' Map with ' + layer_color_name + ' Color'
       if layer_truth_str is not None:
          title += ' with true value ' + layer_truth_str
       ax.set_title(title)
