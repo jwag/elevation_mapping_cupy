@@ -59,10 +59,6 @@ xp = cp
 pool = cp.cuda.MemoryPool(cp.cuda.malloc_managed)
 cp.cuda.set_allocator(pool.malloc)
 
-# For Soil Prop Estimation
-from train_model import DozerSoilPropEstModel
-import copy
-
 class ElevationMap:
     """Core elevation mapping class."""
 
@@ -73,6 +69,12 @@ class ElevationMap:
             param (elevation_mapping_cupy.parameter.Parameter):
         """
         self.param = param
+        # For Soil Prop Estimation
+        if param.use_soil_property_estimation:
+            from train_model import DozerSoilPropEstModel
+            import copy
+            self.dz = DozerSoilPropEstModel.load_from_checkpoint(param.soil_prop_est_net_checkpoint_path, mode='deploy')
+        
         self.data_type = self.param.data_type
         self.resolution = param.resolution
         self.center = xp.array([[0],[0],[0]], dtype=self.data_type)
@@ -164,11 +166,11 @@ class ElevationMap:
                 GET_params = config.get(GET_param_name, {})
                 self.GETs[sensor_ID] = GETMovement(sensor_ID, GET_model_name, param, GET_params, xp=xp)
                 # Only load a single soil prop est model for now
-                if param.use_soil_property_estimation:
-                    if not hasattr(self, 'dz'):
-                        self.dz = DozerSoilPropEstModel.load_from_checkpoint(param.soil_prop_est_net_checkpoint_path, mode='deploy')
-                    else:
-                        print("Soil prop est model already loaded")
+                # if param.use_soil_property_estimation:
+                #     if not hasattr(self, 'dz'):
+                #         self.dz = DozerSoilPropEstModel.load_from_checkpoint(param.soil_prop_est_net_checkpoint_path, mode='deploy')
+                #     else:
+                #         print("Soil prop est model already loaded")
     def clear(self):
         """Reset all the layers of the elevation & the semantic map."""
         with self.map_lock:
