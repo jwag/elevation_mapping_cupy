@@ -15,6 +15,7 @@ pip install simple_parsing
 pip install scipy
 pip install torch --index-url https://download.pytorch.org/whl/cu117
 pip install matplotlib
+pip install cv2
 ```
 
 To get profiling working:

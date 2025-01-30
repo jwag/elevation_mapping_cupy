@@ -1,6 +1,6 @@
-from distutils.core import setup
+from setuptools import setup
 ROS_ENABLED = False # how can we define this globally
-SOIL_MAP_ENABLED = False # how can we define this globally
+SOIL_MAP_ENABLED = True # can we define this globally
 if ROS_ENABLED:
     from catkin_pkg.python_setup import generate_distutils_setup
 
@@ -11,12 +11,18 @@ if ROS_ENABLED:
     setup(**setup_args)
 
 else:
-    install_requires = ['numpy', 'cupy-cuda12x', 'scipy', 'matplotlib', 'ruamel.yaml',
+    install_requires = ['numpy', 'cupy-cuda12x', 'scipy', 'matplotlib', 'ruamel.yaml', 'opencv-python',
                         'shapely==1.7.1', 'simple_parsing', 'trimesh[easy]', 'embreex', 'pandas', 'gitpython']
     if SOIL_MAP_ENABLED:
-        install_requires.append('torch @ https://download.pytorch.org/whl/cu124')
-        install_requires.append('lightning')
-        install_requires.append('tensorboard')
+        # This was the latest version of pytorch that is compatible with cuda 12.4 and python 3.8 that i could find
+        # Unlike with calling pip directly, specifying the --index-url https://download.pytorch.org/whl/cu124
+        # doesn't work and a specific wheel has to be specified I think
+        # Alternative pip install torch --index-url https://download.pytorch.org/whl/cu124
+        # install_requires.append('torch @ https://download.pytorch.org/whl/cu124/torch/torch-2.4.1+cu124-cp38-cp38-win_amd64.whl')
+        # install_requires.append('torch @ https://download.pytorch.org/whl/cu124/torch/torch-2.4.1%Bcu124-cp38-cp38-win_amd64.whl')
+        # install_requires.append('lightning')
+        # install_requires.append('tensorboard')
+        debug=1
     setup(
         name='elevation_mapping_cupy',
         version='1.0',

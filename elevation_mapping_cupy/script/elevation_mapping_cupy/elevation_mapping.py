@@ -13,16 +13,6 @@ import subprocess
 from shapely.geometry import Polygon
 import shapely
 
-# TODO: Modify so imports only happen if traversability is being computed
-# from elevation_mapping_cupy.traversability_filter import (
-#     get_filter_chainer,
-#     get_filter_torch,
-# )
-
-from elevation_mapping_cupy.traversability_filter import (
-    get_filter_torch,
-)
-
 from elevation_mapping_cupy.parameter import Parameter
 
 from elevation_mapping_cupy.kernels import (
@@ -130,8 +120,10 @@ class ElevationMap:
         param.load_weights(weight_file)
 
         if param.use_chainer:
+            from elevation_mapping_cupy.traversability_filter import get_filter_chainer
             self.traversability_filter = get_filter_chainer(param.w1, param.w2, param.w3, param.w_out)
         else:
+            from elevation_mapping_cupy.traversability_filter import get_filter_torch
             self.traversability_filter = get_filter_torch(param.w1, param.w2, param.w3, param.w_out)
         self.untraversable_polygon = xp.zeros((1, 2))
 
