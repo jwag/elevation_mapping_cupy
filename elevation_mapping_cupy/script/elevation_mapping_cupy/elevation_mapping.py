@@ -520,7 +520,7 @@ class ElevationMap:
                            n_steps: np.int32,
                            var_h: float,
                            roll: float,
-                           soil_nn_input: dict
+                           soil_nn_input: dict = None
     ):
         """Input the GET movement and update the elevation map.
 
