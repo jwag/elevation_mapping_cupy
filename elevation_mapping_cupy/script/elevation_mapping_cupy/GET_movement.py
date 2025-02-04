@@ -820,14 +820,15 @@ def get_ext_euler_angles(C, xp=np):
     (r,p,y) are in [-pi:pi]x[-pi:pi]x[0:pi].
     Given this assumption we can select the correct set of angles
     """
+    tol = 1e-10
     if xp.abs(C[2, 0]) != 1.0:
         pitch1 = -xp.arcsin(C[2,0]) # Different compared to paper due to 
         roll1 = xp.arctan2(C[2,1]/xp.cos(pitch1), C[2,2]/xp.cos(pitch1))
         yaw1 = xp.arctan2(C[1,0]/xp.cos(pitch1), C[0,0]/xp.cos(pitch1))
         # Select the correct set of angles
-        a1_valid = roll1 >= -xp.pi and roll1 <= xp.pi
-        a1_valid = a1_valid and (pitch1 >= -xp.pi and pitch1 <= xp.pi)
-        a1_valid = a1_valid and (yaw1 >= 0 and yaw1 <= xp.pi)
+        a1_valid = roll1 >= -xp.pi - tol and roll1 <= xp.pi + tol
+        a1_valid = a1_valid and (pitch1 >= -xp.pi - tol and pitch1 <= xp.pi + tol)
+        a1_valid = a1_valid and (yaw1 >= 0 - tol and yaw1 <= xp.pi + tol)
         if a1_valid:
             roll, pitch, yaw = roll1, pitch1, yaw1
             return roll, pitch, yaw
@@ -835,9 +836,9 @@ def get_ext_euler_angles(C, xp=np):
         pitch2 = xp.pi - pitch1
         roll2 = xp.arctan2(C[2,1]/xp.cos(pitch2), C[2,2]/xp.cos(pitch2))
         yaw2 = xp.arctan2(C[1,0]/xp.cos(pitch2), C[0,0]/xp.cos(pitch2))
-        a2_valid = roll2 >= -xp.pi and roll2 <= xp.pi
-        a2_valid = a2_valid and (pitch2 >= -xp.pi and pitch2 <= xp.pi)
-        a2_valid = a2_valid and (yaw2 >= 0 and yaw2 <= xp.pi)
+        a2_valid = roll2 >= -xp.pi - tol and roll2 <= xp.pi +tol
+        a2_valid = a2_valid and (pitch2 >= -xp.pi - tol and pitch2 <= xp.pi + tol)
+        a2_valid = a2_valid and (yaw2 >= 0 - tol and yaw2 <= xp.pi + tol)
         if a2_valid:
             roll, pitch, yaw = roll2, pitch2, yaw2
             return roll, pitch, yaw
@@ -1452,7 +1453,10 @@ class GETMovement:
 
         # Set the rotation matrix as defined by the translation direction
         # First normalize the translation vector
-        t_dir = translation[0:2] / np.linalg.norm(translation[0:2])
+        mag = np.linalg.norm(translation[0:2])
+        if mag == 0:
+            raise ValueError("Translation vector cannot be zero")
+        t_dir = translation[0:2] / mag
         c_yaw = t_dir[0]
         s_yaw = t_dir[1]
         # The transformation matrix from the map origin frame to the blade depth calculation frame
@@ -1510,7 +1514,14 @@ class GETMovement:
         Returns:
             ground_proj_params (dict):         The ground projection parameters
         """
-        T_OD = self.compute_T_OD(GET_plane_origin, translation)
+        try:
+            T_OD = self.compute_T_OD(GET_plane_origin, translation)
+        except ValueError as e:
+            # Handle the case where the translation vector is zero
+            # This may happen if the blade is not moving or if the movement is too small to be detected
+            # In this case, we can set T_OD to None or some default value
+            T_OD = None
+            warnings.warn(f"Translation vector is zero. Unable to set Transform for interpolation: {e}")
         ground_proj_params = {'T_OD': T_OD, 'dist_to_ground': dist_to_ground}
         return ground_proj_params
         

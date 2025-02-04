@@ -513,7 +513,7 @@ class ElevationMap:
                            M_r_MG: np.ndarray,
                            n_steps: np.int32,
                            var_h: float,
-                           roll: float,
+                           roll: float = None,
                            soil_nn_input: dict = None
     ):
         """Input the GET movement and update the elevation map.
@@ -525,7 +525,8 @@ class ElevationMap:
             M_r_MG (np.ndarray) (n_steps,3):            Position of the GET frame w.r.t. the map frame over time steps
             n_steps (np.int32):                         Number of time steps between T_MG0 and T_MG1 (inclusive) used for interpolation
             var_h (float):                              Variance of the height measurement
-            roll (float):                               Roll angle of the GET frame w.r.t. the map frame
+            roll (float):                               Roll angle of the GET frame w.r.t. the map frame. If None will compute roll 
+                                                        from tranform, but could slow down processing.
             soil_nn_input (dict):                       Dictionary containing the input data for the soil property estimation model
         Returns:
             FEE_em_params:                              FEE parameters obtained from map as dictionary containing:

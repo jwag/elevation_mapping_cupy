@@ -12,7 +12,7 @@ if ROS_ENABLED:
 
 else:
     install_requires = ['numpy', 'cupy-cuda12x', 'scipy', 'matplotlib', 'ruamel.yaml', 'opencv-python',
-                        'shapely==1.7.1', 'simple_parsing', 'trimesh[easy]', 'embreex', 'pandas', 'gitpython']
+                        'shapely', 'simple_parsing', 'trimesh[easy]', 'embreex', 'pandas', 'gitpython']
     if SOIL_MAP_ENABLED:
         # This was the latest version of pytorch that is compatible with cuda 12.4 and python 3.8 that i could find
         # Unlike with calling pip directly, specifying the --index-url https://download.pytorch.org/whl/cu124

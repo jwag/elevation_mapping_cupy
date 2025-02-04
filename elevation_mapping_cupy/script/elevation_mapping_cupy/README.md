@@ -10,7 +10,7 @@ pip install cupy-cuda117
 cd elevation_mapping_cupy
 pip install -e .
 pip install ruamel.yaml
-pip install shapely==1.7.1
+pip install shapely # Need newer version of shapely not 1.7.1
 pip install simple_parsing
 pip install scipy
 pip install torch --index-url https://download.pytorch.org/whl/cu117
