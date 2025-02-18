@@ -1,5 +1,3 @@
-# Settings of the plugins. (The plugins should be stored in script/plugins)
-
 # min_filter fills in minimum value around the invalid cell.
 min_filter:                                   
   enable: True                                # weather to load this plugin

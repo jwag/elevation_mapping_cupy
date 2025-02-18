@@ -154,7 +154,7 @@ ROS package dependencies
 .. code-block:: bash
 
   sudo apt install ros-noetic-pybind11-catkin
-  sudo apt install ros-noetic-grid-map-core ros-noetic-grid-map-msgs
+  sudo apt install ros-noetic-grid-map-core ros-noetic-grid-map-msgs ros-noetic-grid-map-ros
 
 
 On Jetson
@@ -169,6 +169,19 @@ Python dependencies
 -------------------------------------------------------------------
 
 On jetson, you need the version for its CPU arch:
+
+Please check `official document <https://docs.nvidia.com/deeplearning/frameworks/install-pytorch-jetson-platform/index.html>`_ for latest information for pytorch.
+
+Current for Jetson Orin on Ubuntu 20.04:
+
+.. code-block:: bash
+
+  export TORCH_INSTALL=https://developer.download.nvidia.cn/compute/redist/jp/v511/pytorch/torch-2.0.0+nv23.05-cp38-cp38-linux_aarch64.whl
+  pip install Cython
+  python -m pip install numpy==’1.24.1’ 
+  python -m pip install --no-cache $TORCH_INSTALL
+
+Current for Jetson Xavier on Ubuntu 18.04:
 
 .. code-block:: bash
     
@@ -195,7 +208,7 @@ ROS dependencies
 .. code-block:: bash
 
   sudo apt install ros-melodic-pybind11-catkin
-  sudo apt install ros-melodic-grid-map-core ros-melodic-grid-map-msgs
+  sudo apt install ros-melodic-grid-map-core ros-melodic-grid-map-msgs ros-melodic-grid-map-ros
 
 
 Also, on jetson you need fortran (should already be installed).
@@ -252,7 +265,16 @@ Python dependencies
 
 .. code-block:: bash
 
-  pip3 install torchvision scikit-learn
+  pip3 install scikit-learn
+
+Torchvision (for Jetson Orin on Ubuntu 20.04) 
+
+.. code-block:: bash
+
+  git clone --branch release/0.15 https://github.com/pytorch/vision torchvision
+  cd torchvision/
+  export BUILD_VERSION=0.15.1
+  python3 setup.py install --user
 
 Detectron
 

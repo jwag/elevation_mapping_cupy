@@ -1,65 +1,65 @@
-# Settings of the plugins. (The plugins should be stored in script/plugins)
-
-# min_filter fills in minimum value around the invalid cell.
-min_filter:                                   
-  enable: True                                # weather to load this plugin
-  fill_nan: False                             # Fill nans to invalid cells of elevation layer.
-  is_height_layer: True                       # If this is a height layer (such as elevation) or not (such as traversability)
-  layer_name: "min_filter"                    # The layer name.
-  extra_params:                               # This params are passed to the plugin class on initialization.
-    dilation_size: 1                         # The patch size to apply
-    iteration_n: 30                           # The number of iterations
-# Apply smoothing.
-smooth_filter:
-  enable: True
-  fill_nan: False
-  is_height_layer: True
-  layer_name: "smooth"
-  extra_params:
-    input_layer_name: "min_filter"
-fee_index:
-  enable: True
-  fill_nan: [False, False]
-  is_height_layer: [False, False]
-  layer_name: ["FEE_index", FEE_index_var] # The layer name. # WARNING: Must currently be in this order! TODO: Fix this by having layer_name be part of class not a config
-  extra_params:
-    Q: 0.0
-    d: 0.2
-    w: 3.164
-    alpha: 0.0
-    rho: 1.39626
-    vx: 1.0
-    vz: 0.0
-    s_q: 1.0
-    # These parameter variance values are based on ranges of parameters in the network
-    # WARNING: If parameter ranges change in the network normalization then these values should be updated
-    # WARNING: Also if the variance parameters that the network estimates is changed, these values should be updated
-    Q_var: 2500.0
-    d_var: 1.0e-6
-    w_var: 1.0e-4
-    alpha_var: 1.3539e-6
-    rho_var: 1.3539e-6
-    vx_var: 1.1111e-5
-    vz_var: 4.4444e-5 # currently vz_var is being estimated by the network, but for FEE_index we want it to be small
-    beta_var: 1.2219e-6
-    # s_q_var: 1.0e-5 # Disabled because the jacobian for s_q is not implemented in the network
-# Commenting Out OpenCV functionality for now
-# # Apply inpainting using opencv
-# inpainting:
-#   enable: True
-#   fill_nan: False
-#   is_height_layer: True
-#   layer_name: "inpaint"
-#   extra_params:
-#     method: "telea"                           # telea or ns
-# # Apply smoothing for inpainted layer
-# erosion:
-#   enable: True
-#   fill_nan: False
-#   is_height_layer: False
-#   layer_name: "erosion"
-#   extra_params:
-#     input_layer_name: "traversability"
-#     dilation_size: 3
-#     iteration_n: 20
-#     reverse: True
+/elevation_mapping_node:
+  ros__parameters:
+    # min_filter fills in minimum value around the invalid cell.
+    min_filter:                                   
+      enable: True                                # weather to load this plugin
+      fill_nan: False                             # Fill nans to invalid cells of elevation layer.
+      is_height_layer: True                       # If this is a height layer (such as elevation) or not (such as traversability)
+      layer_name: "min_filter"                    # The layer name.
+      extra_params:                               # This params are passed to the plugin class on initialization.
+        dilation_size: 1                         # The patch size to apply
+        iteration_n: 30                           # The number of iterations
+    # Apply smoothing.
+    smooth_filter:
+      enable: True
+      fill_nan: False
+      is_height_layer: True
+      layer_name: "smooth"
+      extra_params:
+        input_layer_name: "min_filter"
+    fee_index:
+      enable: True
+      fill_nan: [False, False]
+      is_height_layer: [False, False]
+      layer_name: ["FEE_index", FEE_index_var] # The layer name. # WARNING: Must currently be in this order! TODO: Fix this by having layer_name be part of class not a config
+      extra_params:
+        Q: 0.0
+        d: 0.2
+        w: 3.164
+        alpha: 0.0
+        rho: 1.39626
+        vx: 1.0
+        vz: 0.0
+        s_q: 1.0
+        # These parameter variance values are based on ranges of parameters in the network
+        # WARNING: If parameter ranges change in the network normalization then these values should be updated
+        # WARNING: Also if the variance parameters that the network estimates is changed, these values should be updated
+        Q_var: 2500.0
+        d_var: 1.0e-6
+        w_var: 1.0e-4
+        alpha_var: 1.3539e-6
+        rho_var: 1.3539e-6
+        vx_var: 1.1111e-5
+        vz_var: 4.4444e-5 # currently vz_var is being estimated by the network, but for FEE_index we want it to be small
+        beta_var: 1.2219e-6
+        # s_q_var: 1.0e-5 # Disabled because the jacobian for s_q is not implemented in the network
+    # Commenting Out OpenCV functionality for now
+    # # Apply inpainting using opencv
+    # inpainting:
+    #   enable: True
+    #   fill_nan: False
+    #   is_height_layer: True
+    #   layer_name: "inpaint"
+    #   extra_params:
+    #     method: "telea"                           # telea or ns
+    # # Apply smoothing for inpainted layer
+    # erosion:
+    #   enable: True
+    #   fill_nan: False
+    #   is_height_layer: False
+    #   layer_name: "erosion"
+    #   extra_params:
+    #     input_layer_name: "traversability"
+    #     dilation_size: 3
+    #     iteration_n: 20
+    #     reverse: True

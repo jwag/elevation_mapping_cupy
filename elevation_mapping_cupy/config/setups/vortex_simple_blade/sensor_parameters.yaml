@@ -1,66 +1,68 @@
-#### Channel Fusions ########
-pointcloud_channel_fusions:
-  rgb: 'color'                # 'color' fusion is used for the 'rgb' channel
-  default: 'average'          # 'average' fusion is used for channels not listed here
+/elevation_mapping_node:
+  ros__parameters:
+    #### Channel Fusions ########
+    pointcloud_channel_fusions:
+      rgb: 'color'                # 'color' fusion is used for the 'rgb' channel
+      default: 'average'          # 'average' fusion is used for channels not listed here
 
-GET_channel_fusions:
-  dig_difficulty: 'latest' # 'latest' fusion is used for the 'dig_difficulty' channel since we don't have uncertainty yet #deprecated
-  d: 'latest' # 'latest' fusion is used for the 'd' channel as it is just used for visualization
-  MeanCuttingForceMag: 'latest' # 'latest' fusion is used for the 'MeanCuttingForceMag' channel as it is just used for visualization
-  default: 'bayesian_inference'
+    GET_channel_fusions:
+      dig_difficulty: 'latest' # 'latest' fusion is used for the 'dig_difficulty' channel since we don't have uncertainty yet #deprecated
+      d: 'latest' # 'latest' fusion is used for the 'd' channel as it is just used for visualization
+      MeanCuttingForceMag: 'latest' # 'latest' fusion is used for the 'MeanCuttingForceMag' channel as it is just used for visualization
+      default: 'bayesian_inference'
 
-additional_layers: []
+    additional_layers: []
 
-#### Subscribers ########
-subscribers:
-  lidar_front: # Must match the observation key from the gym env
-    topic_name: '/lidar/front/points'
-    data_type: pointcloud
-    noise_model_name: SLS_old
-    SLS_old_noise_model_params:
-      sensor_noise_factor: 0.05                       # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
-    constant_noise_model_params:
-      constant_variance: 0.01
-    SLS_noise_model_params:
-      a: 6.8e-3
-      b: 28.0e-3
-      c: 38.0e-3
-      # d: (42e-3+2.0e-3)/2.0
-      d: 22.0e-3
-      Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
-      Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
-    LiDAR_noise_model_params:
-      a: 0.012
-      b: 6.8
-      c: 0.81
-      Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
-      Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
-  lidar_rear: # Must match the observation key from the gym env
-    topic_name: '/lidar/rear/points'
-    data_type: pointcloud
-    noise_model_name: SLS_old
-    SLS_old_noise_model_params:
-      sensor_noise_factor: 0.05                       # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
-    constant_noise_model_params:
-      constant_variance: 0.01
-    SLS_noise_model_params:
-      a: 6.8e-3
-      b: 28.0e-3
-      c: 38.0e-3
-      # d: (42e-3+2.0e-3)/2.0
-      d: 22.0e-3
-      Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
-      Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
-    LiDAR_noise_model_params:
-      a: 0.012
-      b: 6.8
-      c: 0.81
-      Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
-      Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
-  simple_flat_blade:
-    data_type: GET
-    GET_model_name: 'simple_blade'
-    soil_prop_est_net_checkpoint_path: './lightning_logs/Elevation-Mapping1-phys_inf/lightning_logs/version_42/checkpoints/last.ckpt'
-    simple_blade_GET_params:
-      blade_width: 3.164
-      blade_height: 0.660
+    #### Subscribers ########
+    subscribers:
+      lidar_front: # Must match the observation key from the gym env
+        topic_name: '/lidar/front/points'
+        data_type: pointcloud
+        noise_model_name: SLS_old
+        SLS_old_noise_model_params:
+          sensor_noise_factor: 0.05                       # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
+        constant_noise_model_params:
+          constant_variance: 0.01
+        SLS_noise_model_params:
+          a: 6.8e-3
+          b: 28.0e-3
+          c: 38.0e-3
+          # d: (42e-3+2.0e-3)/2.0
+          d: 22.0e-3
+          Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
+          Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
+        LiDAR_noise_model_params:
+          a: 0.012
+          b: 6.8
+          c: 0.81
+          Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
+          Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
+      lidar_rear: # Must match the observation key from the gym env
+        topic_name: '/lidar/rear/points'
+        data_type: pointcloud
+        noise_model_name: SLS_old
+        SLS_old_noise_model_params:
+          sensor_noise_factor: 0.05                       # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
+        constant_noise_model_params:
+          constant_variance: 0.01
+        SLS_noise_model_params:
+          a: 6.8e-3
+          b: 28.0e-3
+          c: 38.0e-3
+          # d: (42e-3+2.0e-3)/2.0
+          d: 22.0e-3
+          Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
+          Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
+        LiDAR_noise_model_params:
+          a: 0.012
+          b: 6.8
+          c: 0.81
+          Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
+          Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
+      simple_flat_blade:
+        data_type: GET
+        GET_model_name: 'simple_blade'
+        soil_prop_est_net_checkpoint_path: './lightning_logs/Elevation-Mapping1-phys_inf/lightning_logs/version_42/checkpoints/last.ckpt'
+        simple_blade_GET_params:
+          blade_width: 3.164
+          blade_height: 0.660

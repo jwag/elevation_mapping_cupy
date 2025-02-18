@@ -1,14 +1,40 @@
-from setuptools import setup
-ROS_ENABLED = False # how can we define this globally
+from setuptools import setup, find_packages
+from glob import glob
+import os
+ROS_ENABLED = True # how can we define this globally
 SOIL_MAP_ENABLED = True # can we define this globally
+
+package_name = 'elevation_mapping_cupy'
 if ROS_ENABLED:
-    from catkin_pkg.python_setup import generate_distutils_setup
-
-    setup_args = generate_distutils_setup(
-        packages=["elevation_mapping_cupy", "elevation_mapping_cupy.plugins",], package_dir={"": "script"},
+    setup(
+        name=package_name,
+        version='2.0.0',
+        packages=find_packages(include=[package_name, f'{package_name}.*']),
+        install_requires=['setuptools'],
+        zip_safe=True,
+        author='Your Name',
+        author_email='your.email@example.com',
+        maintainer='Your Name',
+        maintainer_email='your.email@example.com',
+        description='Elevation mapping on GPU',
+        license='MIT',
+        tests_require=['pytest'],
+        entry_points={
+            'console_scripts': [
+                'elevation_mapping_node.py = '+package_name+'.elevation_mapping_node:main',
+            ],
+        },
+        data_files=[
+            ('share/ament_index/resource_index/packages',['resource/' + package_name]),
+            (os.path.join('share', package_name, 'launch'), glob('launch/*.launch.py')),
+            *[(os.path.join('share', package_name, os.path.dirname(yaml_file)), [yaml_file]) for yaml_file in glob('config/**/*.yaml', recursive=True)],
+            # also the .*dat files
+            *[(os.path.join('share', package_name, os.path.dirname(dat_file)), [dat_file]) for dat_file in glob('config/**/*.dat', recursive=True)],
+            # add rviz files
+            *[(os.path.join('share', package_name, os.path.dirname(rviz_file)), [rviz_file]) for rviz_file in glob('rviz/**/*.rviz', recursive=True)],
+            (os.path.join('share', package_name), ['package.xml']),
+        ],
     )
-
-    setup(**setup_args)
 
 else:
     install_requires = ['numpy', 'cupy-cuda12x', 'scipy', 'matplotlib', 'ruamel.yaml', 'opencv-python',
@@ -24,9 +50,9 @@ else:
         # install_requires.append('tensorboard')
         debug=1
     setup(
-        name='elevation_mapping_cupy',
+        name=package_name,
         version='1.0',
-        packages=['elevation_mapping_cupy', 'elevation_mapping_cupy.plugins'],
-        package_dir={'': 'script'},
+        packages=[package_name, package_name+'.plugins'],
+        package_dir={'': package_name},
         install_requires=install_requires,
     )
