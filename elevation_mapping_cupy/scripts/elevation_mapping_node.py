@@ -9,8 +9,9 @@ from rclpy.qos import QoSPresetProfiles
 from ament_index_python.packages import get_package_share_directory
 import ros2_numpy as rnp
 from sensor_msgs.msg import PointCloud2, Image, CameraInfo
+from nav_msgs.msg import Odometry
 from sensor_msgs_py import point_cloud2
-from tf_transformations import quaternion_matrix
+from tf_transformations import quaternion_matrix, quaternion_conjugate, quaternion_multiply
 import tf2_ros
 import message_filters
 from cv_bridge import CvBridge
@@ -211,8 +212,10 @@ class ElevationMappingNode(Node):
         if any(config.get("data_type") == "image" for config in self.my_subscribers.values()):
             self.cv_bridge = CvBridge()
 
-        pointcloud_subs = {}
-        image_subs = {}
+        self._pointcloud_subs = {}
+        self._image_subs = {}
+        self._GET_subs = {}
+        self._GET_subs_history = {}
 
         for key, config in self.my_subscribers.items():
             data_type = config.get("data_type")
@@ -233,7 +236,7 @@ class ElevationMappingNode(Node):
                     [camera_sub, camera_info_sub], queue_size=10, slop=0.5
                 )
                 image_sync.registerCallback(partial(self.image_callback, sub_key=key))
-                image_subs[key] = image_sync
+                self._image_subs[key] = image_sync
             elif data_type == "pointcloud":
                 topic_name = config.get("topic_name", "/pointcloud")
                 # qos_profile = rclpy.qos.QoSProfile(
@@ -251,7 +254,20 @@ class ElevationMappingNode(Node):
                     partial(self.pointcloud_callback, sub_key=key),
                     qos_profile
                 )
-                pointcloud_subs[key] = subscription
+                self._pointcloud_subs[key] = subscription
+            elif data_type == "GET":
+                topic_name = config.get("topic_name", "/odom_blade")
+                subscription = self.create_subscription(
+                    Odometry,
+                    topic_name,
+                    partial(self.GET_odometry_callback, sub_key=key),
+                    10
+                )
+                self._GET_subs[key] = subscription
+                if config['max_translation_m'] < self.param.resolution * np.sqrt(2.0):
+                    self.get_logger().warn(f"Maximum translation distance for subscriber '{key}' is less than sqrt(2) times the resolution of the map. This could cause FEE width and surcharge calculation issues.")
+                # For help in determining when to process the GET movement
+                self._GET_subs_history[key] = self.GET_history(em_node=self, GET_config=config)
 
     def register_publishers(self) -> None:
         self._publishers_dict = {}
@@ -414,6 +430,133 @@ class ElevationMappingNode(Node):
                                    Sigma_b_r_MB=None,
                                    Sigma_Theta_MB=None)
         self._pointcloud_process_counter += 1
+    
+    class GET_history():
+        """Class to aid in monintoring the change in GET pose and twist over time to enable
+        calling the input_GET_movement function only when the GET movement of the get meets
+        certain criteria.
+        """
+        def __init__(self, em_node: 'ElevationMappingNode', GET_config: dict):
+            self.em_node = em_node
+            self.GET_config = GET_config
+            self.stamp_float = None
+            self.position = None
+            self.orientation = None
+            self.var_z = None
+            # Indicates the direction of movment with repsect to the blade normal vector
+            self.movement_dir = None
+
+        @classmethod
+        def GET_from_msg(cls, em_node: 'ElevationMappingNode', msg: Odometry, GET_config: dict) -> 'ElevationMappingNode.GET_history':
+            # Make sure the frame id is in the map_frame
+            if msg.header.frame_id != em_node.map_frame:
+                em_node.get_logger().warn(f"Odometry frame id {msg.header.frame_id} does not match map frame id {em_node.map_frame}. Not processing GET Movement.")
+                return
+            if msg.child_frame_id != GET_config["blade_frame"]:
+                em_node.get_logger().warn(f"Odometry child frame id {msg.child_frame_id} does not match blade frame id {GET_config['blade_frame']}. Not processing GET Movement.")
+                return
+            # Create an instance of GET_history and populate it with data from the message
+            instance = cls(em_node=em_node, GET_config=GET_config)
+            stamp = msg.header.stamp
+            instance.stamp_float = stamp.sec + stamp.nanosec * 1e-9 
+            pos = msg.pose.pose.position
+            instance.position = np.array([pos.x, pos.y, pos.z])
+            instance.var_z = msg.pose.covariance[14]
+            orientation = msg.pose.pose.orientation
+            # Using the trasnformations convention of [x, y, z, w]
+            instance.orientation = np.array([orientation.x, orientation.y, orientation.z, orientation.w])
+            # Sign of the X direction velocity in the child_frame_id=blade_frame will tell us if the GET is moving forward or backward
+            # WARNING: This means that the velocity of this message should be relatively smooth as noise could cause the sign to change frequently
+            instance.movement_dir = np.sign(msg.twist.twist.linear.x)
+            # TODO: Only currently supporting a child frame id that is the same as the blade frame id. Could maybe support otherwise later
+            # Using a tf lookup to get the normal vector of the blade and .. Keeping below code for later in case it comes in handy
+            # Project the velocity into the map frame and pull out the x and y components
+            # Only apply the rotation not the translation as this is a velocity
+            # transform_child_to_map = em_node.safe_lookup_transform(msg.child_frame_id, em_node.map_frame, em_node.map_frame)
+            # rot_q = transform_child_to_map.transform.rotation
+            # rot = quaternion_matrix([rot_q.x, rot_q.y, rot_q.z, rot_q.w])[:3, :3]
+            # linear = msg.twist.twist.linear
+            # vel = np.array([linear.x, linear.y, linear.z])
+            # xy_vel = np.dot(rot, vel)[:2]
+            return instance
+        
+        def assign_from_instance(self, instance: 'ElevationMappingNode.GET_history'):
+            # Assign the values from the instance to the current instance
+            self.em_node = instance.em_node
+            self.GET_config = instance.GET_config
+            self.stamp_float = instance.stamp_float
+            self.position = instance.position
+            self.orientation = instance.orientation
+            self.var_z = instance.var_z
+            self.movement_dir = instance.movement_dir
+
+        def check_movement(self, msg: Odometry):
+            # Update is a flag that will be set to True if the GET has moved more than a specified distance,
+            # the maximum amount of time between processings has passed, the orientation has changed more than
+            # a specified amount, or the sign of the dot product between the xy velocity in the map frame 
+            # with the GET normal vector changes sign indicating a change in direction. If any of these conditions
+            # are met then this indicates that the movement should be used to update the map.
+            update = False
+            # Use the first message to set the initial values
+            if self.stamp_float is None:
+                GET_hist = self.GET_from_msg(self.em_node, msg, self.GET_config)
+                self.assign_from_instance(GET_hist)
+                GET_curr = None
+            else:
+                # Check if the GET has moved more than a specified distance
+                GET_curr = self.GET_from_msg(self.em_node, msg, self.GET_config)
+                dist = np.linalg.norm(GET_curr.position - self.position)
+                if dist > self.GET_config["max_translation_m"]:
+                    self.em_node.get_logger().info(f"GET has moved {dist} meters. Triggering update.")
+                    update = True
+                # Check if the maximum amount of time between processings has passed
+                dt = GET_curr.stamp_float - self.stamp_float
+                if  dt > self.GET_config["max_time_s"]:
+                    self.em_node.get_logger().info(f"GET has not moved for {dt} seconds. Triggering update.")
+                    update = True
+                # Check if the orientation has changed more than a specified amount
+                # See: https://www.mathworks.com/help/driving/ref/quaternion.dist.html
+                q1 = self.orientation
+                q2 = GET_curr.orientation
+                angle_deg = 2 * np.arccos(np.abs(quaternion_multiply(q1, quaternion_conjugate(q2))[3])) * 180 / np.pi
+                if angle_deg > self.GET_config["max_rotation_deg"]:
+                    self.em_node.get_logger().info(f"GET has rotated {angle_deg} degrees. Triggering update.")
+                    update = True
+                # Check if we have changed direction
+                if GET_curr.movement_dir != self.movement_dir:
+                    self.em_node.get_logger().info(f"GET has changed direction. Triggering update.")
+                    update = True
+            return update, GET_curr
+        
+        def get_transform(self):
+            T_MG = quaternion_matrix(self.orientation).astype(np.float32)
+            T_MG[:3, 3] = self.position
+            return T_MG
+    
+    def GET_odometry_callback(self, msg: Odometry, sub_key: str) -> None:
+        self.get_logger().info(f"Received GET odometry message for {sub_key}")
+        GET_hist = self._GET_subs_history[sub_key]
+        update, GET_curr = GET_hist.check_movement(msg)
+        if update:
+            self.get_logger().info(f"Processing GET movement for {sub_key}")
+            T_MG0 = GET_hist.get_transform()
+            T_MG1 = GET_curr.get_transform()
+            # Average the variance of the two messages for now
+            var_h = (GET_hist.var_z + GET_curr.var_z) / 2
+            # TODO: provide some sort of interpolation here using tf2
+            # Pull out translation from T_MG0 and T_MG1 and append
+            M_r_MG = np.array([T_MG0[:3, 3], T_MG1[:3, 3]]).astype(np.float32)
+            n_steps = 2
+            roll = 0.1 # TODO: could probably more efficiently obtain roll here than the internal implementation
+            self._map.input_GET_movement(GET_ID=sub_key,
+                            T_MG0=T_MG0,
+                            T_MG1=T_MG1,
+                            M_r_MG=M_r_MG,
+                            n_steps=n_steps,
+                            var_h=var_h,
+                            roll= roll)
+            # Update the history with the current message
+            GET_hist.assign_from_instance(GET_curr)
 
     def pose_update(self) -> None:
         if self._last_t is None:

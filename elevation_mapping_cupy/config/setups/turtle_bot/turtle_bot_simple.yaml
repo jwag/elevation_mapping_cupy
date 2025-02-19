@@ -8,6 +8,12 @@
       rgb: 'color'
       default: 'exponential'
       feat_.*: 'exponential'
+    
+      GET_channel_fusions:
+        dig_difficulty: 'latest' # 'latest' fusion is used for the 'dig_difficulty' channel since we don't have uncertainty yet #deprecated
+        d: 'latest' # 'latest' fusion is used for the 'd' channel as it is just used for visualization
+        MeanCuttingForceMag: 'latest' # 'latest' fusion is used for the 'MeanCuttingForceMag' channel as it is just used for visualization
+        default: 'bayesian_inference'
 
     subscribers:
       front_cam:
@@ -17,10 +23,22 @@
         noise_model_name: SLS_old
         SLS_old_noise_model_params:
           sensor_noise_factor: 0.05                       # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
+      simple_flat_blade:
+        data_type: GET
+        GET_model_name: 'simple_blade'
+        topic_name: '/odom'
+        blade_frame: 'base_footprint'
+        max_translation_m: 0.1
+        max_time_s: 0.5
+        max_rotation_deg: 10.0
+        soil_prop_est_net_checkpoint_path: './lightning_logs/Elevation-Mapping1-phys_inf/lightning_logs/version_42/checkpoints/last.ckpt'
+        simple_blade_GET_params:
+          blade_width: 3.164
+          blade_height: 0.660
 
     publishers:
       elevation_map_raw:
-        layers: ['elevation', 'traversability', 'variance','rgb']
+        layers: ['elevation', 'traversability', 'variance','rgb', 'elevation_loose', 'elevation_compact']
         basic_layers: ['elevation']
         fps: 5.0
       elevation_map_filter:

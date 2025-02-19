@@ -907,7 +907,7 @@ class ElevationMap:
                     updated_inds=None, # Use internal logic to determine which indices to update
                 )
 
-    def process_map_for_publish(self, input_map, fill_nan=False, add_z=False, xp=cp):
+    def process_map_for_publish(self, input_map, fill_nan=False, add_z=False, xp=cp, no_copy=False):
         """Process the input_map according to the fill_nan and add_z flags.
 
         Args:
@@ -919,7 +919,11 @@ class ElevationMap:
         Returns:
             cupy._core.core.ndarray:
         """
-        m = input_map.copy()
+        # Only set no_copy to True if you are sure that the input_map is not used elsewhere
+        if no_copy:
+            m = input_map
+        else:
+            m = input_map.copy()
         if fill_nan:
             m = xp.where(self.elevation_map[2] > 0.5, m, xp.nan)
         if add_z:
@@ -943,6 +947,15 @@ class ElevationMap:
 
         """
         return self.process_map_for_publish(self.elevation_map[7], fill_nan=True, add_z=False)
+
+    def get_elevation_compact(self):
+        """Get the elevation compact layer.
+
+        Returns:
+            elevation layer
+
+        """
+        return self.process_map_for_publish(self.elevation_map[0] - self.elevation_map[7], fill_nan=True, add_z=False, no_copy=True)
 
     def get_variance(self):
         """Get the variance layer.
@@ -1085,6 +1098,8 @@ class ElevationMap:
                 m = self.get_is_upper_bound()
             elif name == "elevation_loose":
                 m = self.get_elevation_loose()
+            elif name == "elevation_compact":
+                m = self.get_elevation_compact()
             elif name == "normal_x":
                 m = self.normal_map.copy()[0, 1:-1, 1:-1]
             elif name == "normal_y":
