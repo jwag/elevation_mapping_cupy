@@ -16,13 +16,13 @@
         default: 'bayesian_inference'
 
     subscribers:
-      front_cam:
-        topic_name: '/intel_realsense_r200_depth/points'
-        data_type: pointcloud
-        channels: ['rgb']
-        noise_model_name: SLS_old
-        SLS_old_noise_model_params:
-          sensor_noise_factor: 0.05                       # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
+      # front_cam:
+      #   topic_name: '/intel_realsense_r200_depth/points'
+      #   data_type: pointcloud
+      #   channels: ['rgb']
+      #   noise_model_name: SLS_old
+      #   SLS_old_noise_model_params:
+      #     sensor_noise_factor: 0.05                       # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
       simple_flat_blade:
         data_type: GET
         GET_model_name: 'simple_blade'

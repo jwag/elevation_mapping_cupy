@@ -74,12 +74,19 @@ class ElevationMappingNode(Node):
         self._image_process_counter = 0
         self._map = ElevationMap(self.param)
         self._map_data = np.zeros(
-            (self._map.cell_n - 2, self._map.cell_n - 2), dtype=np.float32
+            (self._map.cell_n - 2, self._map.cell_n - 2), dtype=self.param.data_type
         )
         self.get_logger().info(f"Initialized map with length: {self._map.map_length}, resolution: {self._map.resolution}, cells: {self._map.cell_n}")
 
         self._map_q = None
         self._map_t = None
+        flat_a_priori = True
+        if flat_a_priori:
+            # Initialize map to have a zero elevaiton everywere
+            corner = self.param.true_map_length/2.0
+            map_z_init = 0.0
+            init_points = np.array([[corner,-corner,map_z_init], [corner,corner,map_z_init], [-corner,corner,map_z_init], [-corner,-corner,map_z_init]])
+            self._map.initialize_map(init_points, method="linear")
 
     def initialize_ros(self) -> None:
         self._tf_buffer = tf2_ros.Buffer()
@@ -308,9 +315,9 @@ class ElevationMappingNode(Node):
         gm.info.resolution = self._map.resolution
         gm.info.length_x = self._map.map_length
         gm.info.length_y = self._map.map_length
-        gm.info.pose.position.x = self._map_t.x
-        gm.info.pose.position.y = self._map_t.y
-        gm.info.pose.position.z = 0.0
+        gm.info.pose.position.x = float(self._map_t[0,0])
+        gm.info.pose.position.y = float(self._map_t[1,0])
+        gm.info.pose.position.z = float(self._map_t[2,0])
         gm.info.pose.orientation.w = 1.0
         gm.info.pose.orientation.x = 0.0
         gm.info.pose.orientation.y = 0.0
@@ -509,11 +516,6 @@ class ElevationMappingNode(Node):
                 if dist > self.GET_config["max_translation_m"]:
                     self.em_node.get_logger().info(f"GET has moved {dist} meters. Triggering update.")
                     update = True
-                # Check if the maximum amount of time between processings has passed
-                dt = GET_curr.stamp_float - self.stamp_float
-                if  dt > self.GET_config["max_time_s"]:
-                    self.em_node.get_logger().info(f"GET has not moved for {dt} seconds. Triggering update.")
-                    update = True
                 # Check if the orientation has changed more than a specified amount
                 # See: https://www.mathworks.com/help/driving/ref/quaternion.dist.html
                 q1 = self.orientation
@@ -526,6 +528,16 @@ class ElevationMappingNode(Node):
                 if GET_curr.movement_dir != self.movement_dir:
                     self.em_node.get_logger().info(f"GET has changed direction. Triggering update.")
                     update = True
+                # Check if the maximum amount of time between processings has passed
+                # This was originally to ensure maximum sweep length was not exceeded for feeding
+                # to the soil property estimation network. However, when vehicle is stationary
+                # this leads to issues so could disable or could modify it so that the original
+                # transform is kept, but the timestep is reset so that when the system does move,
+                # the sweep length is not exceeded.
+                dt = GET_curr.stamp_float - self.stamp_float
+                if not update and dt > self.GET_config["max_time_s"]:
+                    self.em_node.get_logger().info(f"GET map update has not been applied for {dt} seconds. Advancing timestep of GET history.")
+                    self.stamp_float = GET_curr.stamp_float
             return update, GET_curr
         
         def get_transform(self):
@@ -535,9 +547,10 @@ class ElevationMappingNode(Node):
     
     def GET_odometry_callback(self, msg: Odometry, sub_key: str) -> None:
         self.get_logger().info(f"Received GET odometry message for {sub_key}")
+        self._last_t = msg.header.stamp
         GET_hist = self._GET_subs_history[sub_key]
         update, GET_curr = GET_hist.check_movement(msg)
-        if update:
+        if update and self._map_t is not None:
             self.get_logger().info(f"Processing GET movement for {sub_key}")
             T_MG0 = GET_hist.get_transform()
             T_MG1 = GET_curr.get_transform()
@@ -559,6 +572,8 @@ class ElevationMappingNode(Node):
             GET_hist.assign_from_instance(GET_curr)
 
     def pose_update(self) -> None:
+        if self._map_t is not None: # TODO: set some parameter to enable not updating the map pose
+            return
         if self._last_t is None:
             return
         transform = self.safe_lookup_transform(
@@ -570,10 +585,11 @@ class ElevationMappingNode(Node):
         q = transform.transform.rotation
         trans = np.array([t.x, t.y, t.z], dtype=np.float32)
         rot = quaternion_matrix([q.x, q.y, q.z, q.w])[:3, :3].astype(np.float32)
-        # if self._map_t is None: # TODO: set some parameter to enable not updating the map pose
         self._map.move_to(trans, rot)
-        self._map_t = t
+        # Obtain the discretized map position
+        self._map_t = self._map.get_position()
         self._map_q = q
+        self._pose_initizlized = True
 
     def update_variance(self) -> None:
         t2 = self.get_clock().now()

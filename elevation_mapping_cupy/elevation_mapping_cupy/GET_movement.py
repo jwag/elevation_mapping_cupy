@@ -1960,7 +1960,8 @@ class GETMovement:
         # T_OG0 = T_OM @ T_MG0
         # Where a point in represented in O can be obtained from a point represented in M by translating by -map_center
         T_OG0 = T_MG0.copy()
-        T_OG0[:3,3] -= map_center
+        map_center = map_center.reshape(3,1)
+        T_OG0[:3,3:] -= map_center
         # Starting face normal and translation vector are used to determine the direction of material movement (a heuristic)
         # Obtain the normal of the original surface of the GET and put in map origin frame
         normal = T_OG0[:3, :3]@self.GET_mesh.face_normals[0].astype(self.data_type)
@@ -1970,7 +1971,7 @@ class GETMovement:
         # Also get the translation between the two poses of the GET
         translation = T_MG1[:3, 3] - T_MG0[:3, 3]
         # Move the swept volume poistion to the map origin frame
-        O_r_OG = M_r_MG - map_center[None, :]
+        O_r_OG = M_r_MG - map_center.T
 
 
         # Initialize in case of no intersections

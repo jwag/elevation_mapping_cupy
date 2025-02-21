@@ -69,7 +69,7 @@ class ElevationMap:
         
         self.data_type = self.param.data_type
         self.resolution = param.resolution
-        self.center = xp.array([[0],[0],[0]], dtype=self.data_type)
+        self.center = xp.array([[0],[0],[0]], dtype=self.param.data_type)
         self.base_rotation = xp.eye(3, dtype=self.data_type)
         self.map_length = param.map_length
         self.cell_n = param.cell_n
@@ -176,14 +176,24 @@ class ElevationMap:
         self.mean_error = 0.0
         self.additive_mean_error = 0.0
 
-    def get_position(self, position):
+    def get_position(self):
         """Return the position of the map center.
-
-        Args:
-            position (numpy.ndarray):
+        
+        Returns:
+            position (numpy.ndarray): 3x1 array containing the position of the map center
 
         """
-        position = xp.asnumpy(self.center)
+        return xp.asnumpy(self.center)
+    # def get_position(self, position):
+    #     """Return the position of the map center.
+
+    #     Args:
+    #         position (numpy.ndarray):
+
+    #     """
+    #     assert position.shape == self.center.shape, "Position shape must match center shape in order for in-place update"
+    #     position = xp.asnumpy(self.center)
+    #     debug= 1
 
     def move(self, delta_position):
         """Shift the map along all three axes according to the input.
@@ -554,8 +564,7 @@ class ElevationMap:
         T_MG1 = np.asarray(T_MG1, dtype=self.data_type)
         
         with self.map_lock:
-            position = np.array([0, 0, 0], dtype=self.data_type)
-            self.get_position(position)
+            position = self.get_position()
             # TODO: Make the varh derived from the pose uncertainty and use a sensor model
             FEE_em_params, surf_points_dict = self.GETs[GET_ID].update_map_with_GET_movement(
                 self.elevation_map,
