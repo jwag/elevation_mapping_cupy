@@ -489,7 +489,7 @@ class ElevationMappingNode(Node):
                 # the sweep length is not exceeded.
                 dt = GET_curr.stamp_float - self.stamp_float
                 if not update and dt > self.GET_config["max_time_s"]:
-                    self.em_node.get_logger().info(f"GET map update has not been applied for {dt} seconds. Advancing timestep of GET history.")
+                    # self.em_node.get_logger().info(f"GET map update has not been applied for {dt} seconds. Advancing timestep of GET history.")
                     self.stamp_float = GET_curr.stamp_float
             return update, GET_curr
         

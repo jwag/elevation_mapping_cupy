@@ -1259,6 +1259,11 @@ class GETMovement:
         # Only use valid surface points in FEE calc
         surf_points = [surf_point for surf_point, is_valid in zip(surf_points, valid) if is_valid]
         surf_points_inds = [surf_point_ind for surf_point_ind, is_valid in zip(surf_points_inds, valid) if is_valid]
+        # Create a dictionary for surface points for later identification of which cells to apply estiamted soil-props to
+        surf_points_dict = {}
+        # Only need to store the x_t values for the surface points right now, but we will leave the z values for now
+        surf_points_dict['points'] = surf_points
+        surf_points_dict['map_inds'] = surf_points_inds
         # Now fit surface points to a line to get the slope of the surface in the direction of movement (alpha_i)
         # First compute weights for the points
         W = [np.exp(-self.param.surf_interp_coeff * surf_point[:,0]) for surf_point in surf_points]
@@ -1308,7 +1313,7 @@ class GETMovement:
             warnings.warn("Negative depth of cut found in FEE calculation. Excluding from average. Consider reducing sweep distance.")
             if np.all(~d_valid):
                 warnings.warn("All depth of cuts are negative. Returning None.")
-                return None, None
+                return None, surf_points_dict
             d_hat = d_hat[d_valid]
             alpha_hat = alpha_hat[d_valid]
             rho_hat = rho_hat[d_valid]
@@ -1382,11 +1387,6 @@ class GETMovement:
             "var_w": var_w.astype(self.data_type)
         }
 
-        # Create a dictionary for surface points for later identification of which cells to apply estiamted soil-props to
-        surf_points_dict = {}
-        # Only need to store the x_t values for the surface points right now, but we will leave the z values for now
-        surf_points_dict['points'] = surf_points
-        surf_points_dict['map_inds'] = surf_points_inds
         return FEE_em_params, surf_points_dict
     
     def compute_delta_surcharge(self, loose_remaining, compact_swelled_moved, loose_spilled, resolution):
@@ -1661,7 +1661,10 @@ class GETMovement:
         Returns:
             FEE_em_params_proj (dict):       The FEE EM parameters for the projected cells
             FEE_proj_params (dict):          The possibly updated FEE projection parameters
+            FEE_valid (bool):                Whether the returned FEE parameters are valid for computing a force,
+                                             i.e. not just a projection.
             surf_points_dict (dict):         A dictionary of the surface points for each intersected cell {[points[n,2]], [map_inds[n,2]]}
+            intersected_inds (np.ndarray) (:,2): The indices of the intersected cells
         """
         assert n_steps == O_r_OG.shape[0], "The number of time steps must match the number of blade positions"
         # Obtain a map frame aligned bounding box for the swept volume
@@ -1681,7 +1684,7 @@ class GETMovement:
         # TODO: Could perform ray cast even if there is no possibility of intersection if we just want to update the upper bound
         valid_cells = submap[2] > 0.5
         if not self.xp.any(valid_cells):
-            # print("No valid cells in the swept volume")
+            print("No valid cells in the swept volume")
             # TODO: We could however update the upper bound and is upper bound status of the cells...
             update_elevation = False
         else:
@@ -1693,13 +1696,15 @@ class GETMovement:
             dist_to_ground_compact = min_sv_z - max_compact_em_z
             self.ground_proj_params = self.set_blade_ground_dist_calc_params(dist_to_ground_compact.get(), GET_plane_origin, translation)
             if dist_to_ground > 0:
-                # print("No intersection with swept volume")
+                print("No intersection with swept volume")
                 # TODO: We could also update the variance of the cells that are not intersected,
                 #       e.g. if the variance is high then we can reduce it if our swept volume is close to the ground
                 update_elevation = False
         FEE_em_params_proj = None
         FEE_em_params = None
+        FEE_valid = False
         surf_points_dict = None
+        intersected_inds = None
         dV_Q = 0.0
         # Debugging Override
         # update_elevation = True
@@ -1725,6 +1730,7 @@ class GETMovement:
             lines[:,0,2] = start_z
             lines[:,1,2] = submap[0, valid_cells]
             intersections, intersected_lines, pierce_dist, invalid_intersections, invalid_lines = line_mesh_intersection(lines, swept_mesh, coincidence_tol=1e-6)
+            intersected_inds = cell_inds[intersected_lines]
             map_update = False
             if len(intersections) > 0:
                 # print("Intersections found")
@@ -1735,10 +1741,10 @@ class GETMovement:
                 if obtain_FEE_em_params:
                     # Obtain the geometry parameters for the FEE
                     assert GET_plane_origin is not None, "GET_plane_origin must be provided to obtain FEE geometry parameters"
-                    intersected_inds = cell_inds[intersected_lines]
                     FEE_em_params, surf_points_dict = self.obtain_FEE_em_params(intersected_inds, translation, elevation_map, GET_plane_origin, normal, pierce_dist, cell_n, resolution)
                 if FEE_em_params is not None:
                     FEE_proj_params = self.set_blade_depth_calc_params(FEE_em_params, GET_plane_origin, translation)
+                    FEE_valid = True
                 # Find the direction of material movement
                 move_dir, valid_movement = self.material_movement_direction(normal, translation, normal_weight=self.param.move_dir_normal_weight)
                 if not valid_movement:
@@ -1746,7 +1752,7 @@ class GETMovement:
                 else:
                     # Remove the material from the cells that are intersected
                     # Get the indices of the intersected cells
-                    intersected_cells = cell_inds[intersected_lines] - bb_indices[0]
+                    intersected_cells = intersected_inds - bb_indices[0]
                     # Update the elevation map with the new heights
                     delta_h = submap[0, intersected_cells[:,0], intersected_cells[:,1]] - intersections[:,2]
                     submap[0, intersected_cells[:,0], intersected_cells[:,1]] = intersections[:,2]
@@ -1870,7 +1876,7 @@ class GETMovement:
                     FEE_em_params_proj['V_Q'] = V_Q
                     FEE_em_params_proj['Q'] = Q
                     FEE_em_params_proj['d_step'] = np.arange(n_steps)
-        return FEE_em_params_proj, FEE_proj_params, surf_points_dict
+        return FEE_em_params_proj, FEE_proj_params, FEE_valid, surf_points_dict, intersected_inds
 
     def material_movement_direction(self, normal, translation, normal_weight=0.5):
         """
@@ -1978,7 +1984,9 @@ class GETMovement:
         # Initialize in case of no intersections
         # TODO: Figure out how to handle the negative swept volume and the direction of the forces
         FEE_em_params = None
+        FEE_valid = False
         surf_points_dict = None
+        intersected_inds = None
         FEE_em_params_pos = None
         FEE_em_params_neg = None
         if pos_swept_mesh is not None and neg_swept_mesh is not None and FEE==True:
@@ -1987,29 +1995,35 @@ class GETMovement:
         if pos_swept_mesh is not None:
             # Move the swept volume to the map origin frame
             pos_swept_mesh.apply_transform(T_OG0)
-            FEE_em_params_pos, self.pos_swept_mesh_FEE_projection_params, surf_points_dict_pos = self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params_pos, self.pos_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_pos, intersected_inds_pos = self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         if neg_swept_mesh is not None:
             # Flip the direction of the normal for the negative swept volume
             normal = -normal
             # Move the swept volume to the map origin frame
             neg_swept_mesh.apply_transform(T_OG0)
-            FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params, surf_points_dict_neg = self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_neg, intersected_inds_neg = self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         if FEE_em_params_pos is not None and FEE_em_params_neg is not None:
             # Could support this elsewhere by returning both and then combining them after computing the FEE force
             warnings.warn("Combining the FEE parameters for the positive and negative swept volumes is not yet implemented. Not using either.")
             FEE_em_params = None
+            FEE_valid = False
             surf_points_dict = None
+            intersected_inds = np.concatenate((intersected_inds_pos, intersected_inds_neg), axis=0)
         elif FEE_em_params_pos is not None:
             FEE_em_params = FEE_em_params_pos
+            FEE_valid = FEE_valid_pos
             surf_points_dict = surf_points_dict_pos
+            intersected_inds = intersected_inds_pos
         elif FEE_em_params_neg is not None:
             # Need to support this by including the translation direction of the portion of the swept volume
             warnings.warn("Negative swept volume FEE parameters are only partially tested")
             FEE_em_params = FEE_em_params_neg
+            FEE_valid = FEE_valid_pos
             surf_points_dict = surf_points_dict_neg
+            intersected_inds = intersected_inds_neg
         
         # Only return positive FEE parameters for now
-        return FEE_em_params, surf_points_dict
+        return FEE_em_params, FEE_valid, surf_points_dict, intersected_inds
 
 
 if __name__ == "__main__":

@@ -568,7 +568,7 @@ class ElevationMap:
         with self.map_lock:
             position = self.get_position()
             # TODO: Make the varh derived from the pose uncertainty and use a sensor model
-            FEE_em_params, surf_points_dict = self.GETs[GET_ID].update_map_with_GET_movement(
+            FEE_em_params, FEE_valid, surf_points_dict, intersected_inds = self.GETs[GET_ID].update_map_with_GET_movement(
                 self.elevation_map,
                 position,
                 self.cell_n,
@@ -582,13 +582,13 @@ class ElevationMap:
             )
 
 
-            if surf_points_dict is None:
-                intersected_inds = None
-            else:
-                # Pull out the intersected inds so that erosion is not allowed to erode these cells or into them
-                # The first entry in map_inds is the map inds of the intersected cells
-                # keeping as numpy as we will have to perform numpy operations with shapely later
-                intersected_inds = np.array([map_ind[0] for map_ind in surf_points_dict['map_inds']])
+            # if surf_points_dict is None:
+            #     intersected_inds = None
+            # else:
+            #     # Pull out the intersected inds so that erosion is not allowed to erode these cells or into them
+            #     # The first entry in map_inds is the map inds of the intersected cells
+            #     # keeping as numpy as we will have to perform numpy operations with shapely later
+            #     intersected_inds = np.array([map_ind[0] for map_ind in surf_points_dict['map_inds']])
 
             # Just using T_MG1 for now to perform soil erosion. This shouldn't matter as long as our ROI is large enough
             # The factor of 5 here is a bit of a hack to get the soil to erode more quickly since we aren't accounting for v_0
@@ -600,7 +600,11 @@ class ElevationMap:
                     DT -= dT
                     self.perform_soil_erosion(GET_ID, T_MG1, intersected_inds, dT)
 
-            if self.param.use_soil_property_estimation and surf_points_dict is not None:
+            # Warning this was checking if surf_points_dict was none to determine if this was a valid FEE measurement, but
+            # this was resulting in erosion being applied to the map and not excluding the blade. So now we are checking if
+            # FEE_em_params is None. However, this may cause problems when we go back to mapping soil properties.
+            # TODO: Check to see if this change caused problems.
+            if self.param.use_soil_property_estimation and FEE_valid:
                 # Now predict the soil properties
                 sample_len = self.dz.hparams['sample_len']
                 assert len(soil_nn_input['position']) == len(soil_nn_input['velocity']) == len(soil_nn_input['action'] == sample_len), "Lengths of position, velocity, and action must be the same"
