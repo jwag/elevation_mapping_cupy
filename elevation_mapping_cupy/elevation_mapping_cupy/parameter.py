@@ -38,8 +38,6 @@ class Parameter(Serializable):
                         (Default: ``0.5``)
         map_length: The map's size in meters.  
                     (Default: ``8.0``)
-        sensor_noise_factor: The point's noise is sensor_noise_factor*z^2 (z is distance from sensor).  
-                            (Default: ``0.05``)
         mahalanobis_thresh: Points outside this number of standard deviations are considered outliers.
                             (Default: ``2.0``)
         outlier_variance: If point is outlier, add this value to the cell.  
@@ -218,7 +216,6 @@ class Parameter(Serializable):
     average_weight: float = 0.5  # weight for the average fusion
 
     map_length: float = 8.0  # map's size in m.
-    sensor_noise_factor: float = 0.05  # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
     mahalanobis_thresh: float = 2.0  # points outside this distance is outlier.
     outlier_variance: float = 0.01  # if point is outlier, add this value to the cell.
     drift_compensation_variance_inlier: float = 0.1  # cells under this value is used for drift compensation.

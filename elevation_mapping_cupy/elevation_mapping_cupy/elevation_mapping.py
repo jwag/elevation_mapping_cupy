@@ -536,6 +536,7 @@ class ElevationMap:
                            T_MG1: cp._core.core.ndarray,
                            M_r_MG: np.ndarray,
                            n_steps: np.int32,
+                           dt: float,
                            var_h: float,
                            roll: float = None,
                            soil_nn_input: dict = None
@@ -548,6 +549,7 @@ class ElevationMap:
             T_MG1 (cupy._core.core.ndarray):            Transformation matrix from the GET frame to the map frame at time t1
             M_r_MG (np.ndarray) (n_steps,3):            Position of the GET frame w.r.t. the map frame over time steps
             n_steps (np.int32):                         Number of time steps between T_MG0 and T_MG1 (inclusive) used for interpolation
+            dt (float):                                 Time elapsed between T_MG0 and T_MG1
             var_h (float):                              Variance of the height measurement
             roll (float):                               Roll angle of the GET frame w.r.t. the map frame. If None will compute roll 
                                                         from tranform, but could slow down processing.
@@ -589,14 +591,14 @@ class ElevationMap:
                 intersected_inds = np.array([map_ind[0] for map_ind in surf_points_dict['map_inds']])
 
             # Just using T_MG1 for now to perform soil erosion. This shouldn't matter as long as our ROI is large enough
-            # The factor of 3 here is a bit of a hack to get the soil to erode more quickly since we aren't accounting for v_0
-            dT = n_steps / 60.0 * 5.0 # TODO: This should probably be passed in to the function
+            # The factor of 5 here is a bit of a hack to get the soil to erode more quickly since we aren't accounting for v_0
+            DT = dt * 5.0 # TODO: This should probably be passed in to the function
             if self.param.use_soil_erosion:
                 # Perform erosion as many times as necessary to cover the dT time interval given the maximum erosion time step
-                while dT > 0:
-                    dt = min(dT, self.param.soil_erosion_maximum_dt)
-                    dT -= dt
-                    self.perform_soil_erosion(GET_ID, T_MG1, intersected_inds, dt)
+                while DT > 0:
+                    dT = min(DT, self.param.soil_erosion_maximum_dt)
+                    DT -= dT
+                    self.perform_soil_erosion(GET_ID, T_MG1, intersected_inds, dT)
 
             if self.param.use_soil_property_estimation and surf_points_dict is not None:
                 # Now predict the soil properties
@@ -664,25 +666,9 @@ class ElevationMap:
         if GET_inds is not None:
             GET_mask[GET_inds[:,0], GET_inds[:,1]] = False
 
-        # Account for the translation of the map origin (map_center) frame from the map frame
-        # Operations are done in the map origin frame O
-        M_r_MG = cp.array(T_MG[:3, 3:], dtype=self.data_type)
-        O_r_OG = self.shift_translation_to_map_center(M_r_MG).get()
-        T_OG = np.eye(4, dtype=self.data_type)
-        # Extract yaw from the rotation matrix
-        r, p, y = get_ext_euler_angles(T_MG[:3,:3], xp=np)
-        # Only apply yaw rotation to ROI
-        T_OG[0, 0] = np.cos(y)
-        T_OG[0, 1] = np.sin(y)
-        T_OG[1, 0] = -np.sin(y)
-        T_OG[1, 1] = np.cos(y)
-        T_OG[:3, 3:] = O_r_OG
-
         # Define a Rectanguar ROI in frame G around the blade to perform erosion
-        # TODO: Consider moving these parameters to the parameters.yaml file as they should be the same for all blades
         dx = self.param.erosion_ROI_dx/2.0
         dy = (self.param.erosion_ROI_dy + self.GETs[GET_ID].GET_params['blade_width'])/2.0
-
 
         ROI_G = np.zeros((4,4), dtype=self.data_type)
         ROI_G[:,0] = np.array([dx, dy, 0, 1.0])
@@ -691,11 +677,11 @@ class ElevationMap:
         ROI_G[:,3] = np.array([-dx, dy, 0, 1.0])
         
         # Transform the ROI to the map origin frame
-        ROI_O = T_OG @ ROI_G
+        ROI_M = T_MG @ ROI_G
         
         # Get the map indices of the ROI corners
         # TODO: Maybe this should be done in metric coordinates not indices to avoid rounding errors
-        ROI_inds = transform_to_map_index(ROI_O[0:2].T, self.center[0:2].get(), self.cell_n, self.resolution, xp=np)
+        ROI_inds = transform_to_map_index(ROI_M[0:2].T, self.center[0:2].get(), self.cell_n, self.resolution, xp=np)
         # Define a polygon in the map index frame that will be usd to test if a cell is within the ROI
         ROI_poly = Polygon(ROI_inds)
         # Obtain an array of map indicies for a map aligned bounding box around the ROI

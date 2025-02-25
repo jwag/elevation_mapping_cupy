@@ -1698,6 +1698,7 @@ class GETMovement:
                 #       e.g. if the variance is high then we can reduce it if our swept volume is close to the ground
                 update_elevation = False
         FEE_em_params_proj = None
+        FEE_em_params = None
         surf_points_dict = None
         dV_Q = 0.0
         # Debugging Override
@@ -1980,6 +1981,9 @@ class GETMovement:
         surf_points_dict = None
         FEE_em_params_pos = None
         FEE_em_params_neg = None
+        if pos_swept_mesh is not None and neg_swept_mesh is not None and FEE==True:
+            warnings.warn("Self collision detected. No FEE parameters obtained. Updating map.")
+            FEE = False
         if pos_swept_mesh is not None:
             # Move the swept volume to the map origin frame
             pos_swept_mesh.apply_transform(T_OG0)
@@ -1992,7 +1996,9 @@ class GETMovement:
             FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params, surf_points_dict_neg = self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         if FEE_em_params_pos is not None and FEE_em_params_neg is not None:
             # Could support this elsewhere by returning both and then combining them after computing the FEE force
-            raise NotImplementedError("Combining the FEE parameters for the positive and negative swept volumes is not yet implemented")
+            warnings.warn("Combining the FEE parameters for the positive and negative swept volumes is not yet implemented. Not using either.")
+            FEE_em_params = None
+            surf_points_dict = None
         elif FEE_em_params_pos is not None:
             FEE_em_params = FEE_em_params_pos
             surf_points_dict = surf_points_dict_pos

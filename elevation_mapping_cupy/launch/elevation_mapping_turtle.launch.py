@@ -12,8 +12,8 @@ def generate_launch_description():
     package_name = 'elevation_mapping_cupy'
     share_dir = get_package_share_directory(package_name)
     
-    core_param_path = os.path.join(share_dir, 'config', 'core', 'core_param.yaml')
-    turtle_param_path = os.path.join(share_dir, 'config', 'setups', 'turtle_bot', 'turtle_bot_simple.yaml')
+    core_param_path = os.path.join(share_dir, 'config', 'setups', 'turtle_bot', 'parameters.yaml')
+    turtle_param_path = os.path.join(share_dir, 'config', 'setups', 'turtle_bot', 'sensor_GET.yaml')
     
     # Add verification
     if not os.path.exists(core_param_path):

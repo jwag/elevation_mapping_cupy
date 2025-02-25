@@ -271,8 +271,15 @@ class ElevationMappingNode(Node):
                     10
                 )
                 self._GET_subs[key] = subscription
-                if config['max_translation_m'] < self.param.resolution * np.sqrt(2.0):
-                    self.get_logger().warn(f"Maximum translation distance for subscriber '{key}' is less than sqrt(2) times the resolution of the map. This could cause FEE width and surcharge calculation issues.")
+                min_max_translation_m = self.param.resolution * np.sqrt(2.0)
+                if config['max_translation_m'] < min_max_translation_m:
+                    # This also leads to issues with erosion slipping under the blade
+                    self.get_logger().warn(f"Maximum translation distance for subscriber '{key}' is less than sqrt(2) times the resolution of the map. This could cause FEE width and surcharge calculation issues. Setting to {min_max_translation_m} m.")
+                    config['max_translation_m'] = min_max_translation_m
+                # if config['max_rotation_deg'] < 45.0:
+                #     # This also leads to issues with erosion slipping under the blade
+                #     self.get_logger().warn(f"Maximum rotation angle for subscriber '{key}' is less than 45 degrees. This causes erosion issues. Setting to 45 degrees.")
+                #     config['max_rotation_deg'] = 45.0
                 # For help in determining when to process the GET movement
                 self._GET_subs_history[key] = self.GET_history(em_node=self, GET_config=config)
 
@@ -525,9 +532,9 @@ class ElevationMappingNode(Node):
                     self.em_node.get_logger().info(f"GET has rotated {angle_deg} degrees. Triggering update.")
                     update = True
                 # Check if we have changed direction
-                if GET_curr.movement_dir != self.movement_dir:
-                    self.em_node.get_logger().info(f"GET has changed direction. Triggering update.")
-                    update = True
+                # if GET_curr.movement_dir != self.movement_dir:
+                #     self.em_node.get_logger().info(f"GET has changed direction. Triggering update.")
+                #     update = True
                 # Check if the maximum amount of time between processings has passed
                 # This was originally to ensure maximum sweep length was not exceeded for feeding
                 # to the soil property estimation network. However, when vehicle is stationary
@@ -546,12 +553,12 @@ class ElevationMappingNode(Node):
             return T_MG
     
     def GET_odometry_callback(self, msg: Odometry, sub_key: str) -> None:
-        self.get_logger().info(f"Received GET odometry message for {sub_key}")
+        # self.get_logger().info(f"Received GET odometry message for {sub_key}")
         self._last_t = msg.header.stamp
         GET_hist = self._GET_subs_history[sub_key]
         update, GET_curr = GET_hist.check_movement(msg)
         if update and self._map_t is not None:
-            self.get_logger().info(f"Processing GET movement for {sub_key}")
+            # self.get_logger().info(f"Processing GET movement for {sub_key}")
             T_MG0 = GET_hist.get_transform()
             T_MG1 = GET_curr.get_transform()
             # Average the variance of the two messages for now
@@ -560,12 +567,14 @@ class ElevationMappingNode(Node):
             # Pull out translation from T_MG0 and T_MG1 and append
             M_r_MG = np.array([T_MG0[:3, 3], T_MG1[:3, 3]]).astype(np.float32)
             n_steps = 2
+            dt = GET_curr.stamp_float - GET_hist.stamp_float
             roll = 0.1 # TODO: could probably more efficiently obtain roll here than the internal implementation
             self._map.input_GET_movement(GET_ID=sub_key,
                             T_MG0=T_MG0,
                             T_MG1=T_MG1,
                             M_r_MG=M_r_MG,
                             n_steps=n_steps,
+                            dt=dt,
                             var_h=var_h,
                             roll= roll)
             # Update the history with the current message
