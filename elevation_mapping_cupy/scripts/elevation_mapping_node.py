@@ -44,23 +44,19 @@ class ElevationMappingNode(Node):
                 rclpy.Parameter('use_sim_time', rclpy.Parameter.Type.BOOL, True)
             ]
         )
-        self.root = get_package_share_directory("elevation_mapping_cupy")
-        weight_file = os.path.join(self.root, "config/core/weights.dat")
-        plugin_config_file = os.path.join(self.root, "config/core/plugin_config.yaml")
+        # self.root = get_package_share_directory("elevation_mapping_cupy")
+        # weight_file = self.get_parameter('weight_filee').value
+        # if weight_file is None:
+        #     weight_file = os.path.join(self.root, "config/core/weights.dat")
+        # plugin_config_file = self.get_parameter('plugin_config_file').value
+        # if plugin_config_file is None:
+        #     plugin_config_file = os.path.join(self.root, "config/core/plugin_config.yaml")
 
-        # Initialize parameters with some defaults
-        self.param = Parameter(
-            use_chainer=False,
-            weight_file=weight_file,
-            plugin_config_file=plugin_config_file
-        )
+        # Initialize parameters with default values Override later
+        self.param = Parameter()
 
         # Read ROS parameters (including YAML)
         self.initialize_ros()
-        self.set_param_values_from_ros()
-
-        # Overwrite subscriber_cfg from loaded YAML
-        self.param.subscriber_cfg = self.my_subscribers
 
         self.initialize_elevation_mapping()
         self.register_subscribers()
@@ -69,7 +65,6 @@ class ElevationMappingNode(Node):
         self._last_t = None
 
     def initialize_elevation_mapping(self) -> None:
-        self.param.update()
         self._pointcloud_process_counter = 0
         self._image_process_counter = 0
         self._map = ElevationMap(self.param)
@@ -93,130 +88,81 @@ class ElevationMappingNode(Node):
         self._listener = tf2_ros.TransformListener(self._tf_buffer, self)
         self._last_update_time_t = None
         self._last_updat_variance_t = None
+        self.set_param_values_from_ros()
         self.get_ros_params()
-
+    
     def get_ros_params(self) -> None:
-        self.use_chainer = self.get_parameter('use_chainer').get_parameter_value().bool_value
-        self.weight_file = self.get_parameter('weight_file').get_parameter_value().string_value
-        self.plugin_config_file = self.get_parameter('plugin_config_file').get_parameter_value().string_value
-        self.initialize_frame_id = self.get_parameter('initialize_frame_id').get_parameter_value().string_value
-        self.initialize_tf_offset = self.get_parameter('initialize_tf_offset').get_parameter_value().double_array_value
+        ''' These are parameters not in the parameter class but are used in the node.
+        Commented out parameters are not used in the current python node but are left here for future
+        improvemnts as they are used in the C++ node.'''
+        # self.initialize_method = self.get_parameter('initialize_method').get_parameter_value().string_value
+        # self.initialize_frame_id = self.get_parameter('initialize_frame_id').get_parameter_value().string_value
+        # self.initialize_tf_offset = self.get_parameter('initialize_tf_offset').get_parameter_value().double_array_value
+        # self.dialation_size_initial = self.get_parameter('dialation_size_initial').get_parameter_value().integer_value
+        # self.initialize_tf_grid_size = self.get_parameter('initialize_tf_grid_size').get_parameter_value().double_value
+        # self.use_initializer_at_start = self.get_parameter('use_initializer_at_start').get_parameter_value().bool_value
         self.map_frame = self.get_parameter('map_frame').get_parameter_value().string_value
         self.base_frame = self.get_parameter('base_frame').get_parameter_value().string_value
-        self.corrected_map_frame = self.get_parameter('corrected_map_frame').get_parameter_value().string_value
-        self.initialize_method = self.get_parameter('initialize_method').get_parameter_value().string_value
-        self.position_lowpass_alpha = self.get_parameter('position_lowpass_alpha').get_parameter_value().double_value
-        self.orientation_lowpass_alpha = self.get_parameter('orientation_lowpass_alpha').get_parameter_value().double_value
-        self.recordable_fps = self.get_parameter('recordable_fps').get_parameter_value().double_value
+        # self.corrected_map_frame = self.get_parameter('corrected_map_frame').get_parameter_value().string_value
+        # self.position_lowpass_alpha = self.get_parameter('position_lowpass_alpha').get_parameter_value().double_value
+        # self.orientation_lowpass_alpha = self.get_parameter('orientation_lowpass_alpha').get_parameter_value().double_value
+        # self.recordable_fps = self.get_parameter('recordable_fps').get_parameter_value().double_value
         self.update_variance_fps = self.get_parameter('update_variance_fps').get_parameter_value().double_value
         self.time_interval = self.get_parameter('time_interval').get_parameter_value().double_value
-        self.update_pose_fps = self.get_parameter('update_pose_fps').get_parameter_value().double_value
-        self.initialize_tf_grid_size = self.get_parameter('initialize_tf_grid_size').get_parameter_value().double_value
-        self.map_acquire_fps = self.get_parameter('map_acquire_fps').get_parameter_value().double_value
-        self.publish_statistics_fps = self.get_parameter('publish_statistics_fps').get_parameter_value().double_value
-        self.enable_pointcloud_publishing = self.get_parameter('enable_pointcloud_publishing').get_parameter_value().bool_value
-        self.enable_normal_arrow_publishing = self.get_parameter('enable_normal_arrow_publishing').get_parameter_value().bool_value
-        self.enable_drift_corrected_TF_publishing = self.get_parameter('enable_drift_corrected_TF_publishing').get_parameter_value().bool_value
-        self.use_initializer_at_start = self.get_parameter('use_initializer_at_start').get_parameter_value().bool_value
-        subscribers_params = self.get_parameters_by_prefix('subscribers')
-        self.my_subscribers = {}
-        for param_name, param_value in subscribers_params.items():
-            parts = param_name.split('.')
-            current_level = self.my_subscribers
-            for part in parts[:-1]:
-                if part not in current_level:
-                    current_level[part] = {}
-                current_level = current_level[part]
-                current_level[parts[-1]] = param_value.value
-        publishers_params = self.get_parameters_by_prefix('publishers')
-        self.my_publishers = {}
-        for param_name, param_value in publishers_params.items():
-            parts = param_name.split('.')
-            if len(parts) >= 2:
-                pub_key, pub_param = parts[:2]
-                if pub_key not in self.my_publishers:
-                    self.my_publishers[pub_key] = {}
-                self.my_publishers[pub_key][pub_param] = param_value.value
+        # self.update_pose_fps = self.get_parameter('update_pose_fps').get_parameter_value().double_value        # self.map_acquire_fps = self.get_parameter('map_acquire_fps').get_parameter_value().double_value
+        # self.publish_statistics_fps = self.get_parameter('publish_statistics_fps').get_parameter_value().double_value
+        # self.enable_pointcloud_publishing = self.get_parameter('enable_pointcloud_publishing').get_parameter_value().bool_value
+        # self.enable_normal_arrow_publishing = self.get_parameter('enable_normal_arrow_publishing').get_parameter_value().bool_value
+        # self.enable_drift_corrected_TF_publishing = self.get_parameter('enable_drift_corrected_TF_publishing').get_parameter_value().bool_value
 
+    def get_dict_parameters(self, ros_param_name: str):
+        # Get dictionary type parameters from ROS parameters
+        # In ROS, these parameters are nested with a '.'
+        # the ros_param_name is to allow for the ros parameter name to be different that the name of the attribute in the parameter class
+        # e.g. the ros parameter name is "subscribers" but the attribute name is "subscriber_cfg"
+        ros_dict_param = self.get_parameters_by_prefix(ros_param_name)
+        if len(ros_dict_param) == 0:
+            return None
+        else:
+            param_dict = {}
+            for p_name, param_value in ros_dict_param.items():
+                parts = p_name.split('.')
+                current_level = param_dict
+                for part in parts[:-1]:
+                    if part not in current_level:
+                        current_level[part] = {}
+                    current_level = current_level[part]
+                current_level[parts[-1]] = param_value.value
+            return param_dict
 
     def set_param_values_from_ros(self):
-        # Assign to self.param so it won't use defaults
-        # Use try/except so missing params won't cause errors
-        try: self.param.resolution = self.get_parameter('resolution').get_parameter_value().double_value
-        except: pass
-        try: self.param.map_length = self.get_parameter('map_length').get_parameter_value().double_value
-        except: pass
-        try: self.param.sensor_noise_factor = self.get_parameter('sensor_noise_factor').get_parameter_value().double_value
-        except: pass
-        try: self.param.mahalanobis_thresh = self.get_parameter('mahalanobis_thresh').get_parameter_value().double_value
-        except: pass
-        try: self.param.outlier_variance = self.get_parameter('outlier_variance').get_parameter_value().double_value
-        except: pass
-        try: 
-            # The YAML has 'drift_compensation_variance_inler', but our param is 'drift_compensation_variance_inlier'
-            self.param.drift_compensation_variance_inlier = self.get_parameter('drift_compensation_variance_inler').get_parameter_value().double_value
-        except: pass
-        try: self.param.max_drift = self.get_parameter('max_drift').get_parameter_value().double_value
-        except: pass
-        try: self.param.drift_compensation_alpha = self.get_parameter('drift_compensation_alpha').get_parameter_value().double_value
-        except: pass
-        try: self.param.time_variance = self.get_parameter('time_variance').get_parameter_value().double_value
-        except: pass
-        try: self.param.max_variance = self.get_parameter('max_variance').get_parameter_value().double_value
-        except: pass
-        try: self.param.initial_variance = self.get_parameter('initial_variance').get_parameter_value().double_value
-        except: pass
-        try: self.param.traversability_inlier = self.get_parameter('traversability_inlier').get_parameter_value().double_value
-        except: pass
-        try: self.param.dilation_size = self.get_parameter('dilation_size').get_parameter_value().integer_value
-        except: pass
-        try: self.param.wall_num_thresh = self.get_parameter('wall_num_thresh').get_parameter_value().double_value
-        except: pass
-        try: self.param.min_height_drift_cnt = self.get_parameter('min_height_drift_cnt').get_parameter_value().double_value
-        except: pass
-        try: self.param.position_noise_thresh = self.get_parameter('position_noise_thresh').get_parameter_value().double_value
-        except: pass
-        try: self.param.orientation_noise_thresh = self.get_parameter('orientation_noise_thresh').get_parameter_value().double_value
-        except: pass
-        try: self.param.min_valid_distance = self.get_parameter('min_valid_distance').get_parameter_value().double_value
-        except: pass
-        try: self.param.max_height_range = self.get_parameter('max_height_range').get_parameter_value().double_value
-        except: pass
-        try: self.param.ramped_height_range_a = self.get_parameter('ramped_height_range_a').get_parameter_value().double_value
-        except: pass
-        try: self.param.ramped_height_range_b = self.get_parameter('ramped_height_range_b').get_parameter_value().double_value
-        except: pass
-        try: self.param.ramped_height_range_c = self.get_parameter('ramped_height_range_c').get_parameter_value().double_value
-        except: pass
-        try: self.param.max_ray_length = self.get_parameter('max_ray_length').get_parameter_value().double_value
-        except: pass
-        try: self.param.cleanup_step = self.get_parameter('cleanup_step').get_parameter_value().double_value
-        except: pass
-        try: self.param.cleanup_cos_thresh = self.get_parameter('cleanup_cos_thresh').get_parameter_value().double_value
-        except: pass
-        try: self.param.safe_thresh = self.get_parameter('safe_thresh').get_parameter_value().double_value
-        except: pass
-        try: self.param.safe_min_thresh = self.get_parameter('safe_min_thresh').get_parameter_value().double_value
-        except: pass
-        try: self.param.max_unsafe_n = self.get_parameter('max_unsafe_n').get_parameter_value().integer_value
-        except: pass
-        try: self.param.overlap_clear_range_xy = self.get_parameter('overlap_clear_range_xy').get_parameter_value().double_value
-        except: pass
-        try: self.param.overlap_clear_range_z = self.get_parameter('overlap_clear_range_z').get_parameter_value().double_value
-        except: pass
-        try: self.param.enable_edge_sharpen = self.get_parameter('enable_edge_sharpen').get_parameter_value().bool_value
-        except: pass
-        try: self.param.enable_visibility_cleanup = self.get_parameter('enable_visibility_cleanup').get_parameter_value().bool_value
-        except: pass
-        try: self.param.enable_drift_compensation = self.get_parameter('enable_drift_compensation').get_parameter_value().bool_value
-        except: pass
-        try: self.param.enable_overlap_clearance = self.get_parameter('enable_overlap_clearance').get_parameter_value().bool_value
-        except: pass
-        try: self.param.use_only_above_for_upper_bound = self.get_parameter('use_only_above_for_upper_bound').get_parameter_value().bool_value
-        except: pass
+        for name in self.param.get_names():
+            p_type = type(self.param.get_value(name))
+            if p_type == dict:
+                # Subscribers is special case because the param name and the key in the dict are different
+                if name == "subscriber_cfg":
+                    param = self.get_dict_parameters("subscribers")
+                else:
+                    param = self.get_dict_parameters(name)
+                
+                if param is None:
+                    self.get_logger().warn(f"Parameter dictionary {name} not set as ROS parameter. Using default value.")
+                else:
+                    self.param.set_value(name, param)
+            else:
+                param = self.get_parameter(name)
+                if param.type_ == rclpy.parameter.Parameter.Type['NOT_SET']:
+                    self.get_logger().warn(f"Parameter {name} not set as ROS parameter. Using default value.")
+                else:
+                    self.param.set_value(name, param.value)
+
+        self.my_publishers = self.get_dict_parameters("publishers")
+        # Update the computed parameters
+        self.param.update()
+
 
     def register_subscribers(self) -> None:
-        if any(config.get("data_type") == "image" for config in self.my_subscribers.values()):
+        if any(config.get("data_type") == "image" for config in self.param.subscriber_cfg.values()):
             self.cv_bridge = CvBridge()
 
         self._pointcloud_subs = {}
@@ -224,7 +170,7 @@ class ElevationMappingNode(Node):
         self._GET_subs = {}
         self._GET_subs_history = {}
 
-        for key, config in self.my_subscribers.items():
+        for key, config in self.param.subscriber_cfg.items():
             data_type = config.get("data_type")
             if data_type == "image":
                 topic_name_camera = config.get("topic_name_camera", "/camera/image")

@@ -38,7 +38,8 @@
 
     publishers:
       elevation_map_raw:
-        layers: ['elevation', 'traversability', 'variance','rgb', 'elevation_loose', 'elevation_compact']
+        layers: ['elevation', 'traversability', 'variance', 'elevation_loose', 'elevation_compact']
+        # layers: ['elevation', 'traversability', 'variance','rgb', 'elevation_loose', 'elevation_compact']
         basic_layers: ['elevation']
         fps: 5.0
       elevation_map_filter:

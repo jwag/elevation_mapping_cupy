@@ -46,8 +46,6 @@ class Parameter(Serializable):
                                            (Default: ``0.1``)
         variance_inflation_rate: Update the variance at this rate (m^2/s) to compensate for uncertainty due to drift.
                        (Default: ``0.01``)
-        time_interval: Time layer is updated at this interval.  
-                       (Default: ``0.1``)
         max_variance: The maximum variance for each cell.  
                        (Default: ``1.0``)
         dilation_size: The dilation filter size before traversability filter.  
@@ -220,7 +218,6 @@ class Parameter(Serializable):
     outlier_variance: float = 0.01  # if point is outlier, add this value to the cell.
     drift_compensation_variance_inlier: float = 0.1  # cells under this value is used for drift compensation.
     variance_inflation_rate: float = 0.01  # update the variance at this rate (m^2/s) to compensate for uncertainty due to drift.
-    time_interval: float = 0.1  # Time layer is updated at this interval.
 
     max_variance: float = 1.0  # maximum variance for each cell.
     dilation_size: int = 2  # dilation filter size before traversability filter.
