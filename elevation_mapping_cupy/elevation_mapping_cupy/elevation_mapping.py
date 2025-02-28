@@ -8,6 +8,7 @@ from typing import List, Any, Tuple, Union
 import numpy as np
 import threading
 import subprocess
+import warnings
 
 # TODO: Move into GET movement
 from shapely.geometry import Polygon
@@ -568,7 +569,7 @@ class ElevationMap:
         with self.map_lock:
             position = self.get_position()
             # TODO: Make the varh derived from the pose uncertainty and use a sensor model
-            FEE_em_params, FEE_valid, surf_points_dict, intersected_inds = self.GETs[GET_ID].update_map_with_GET_movement(
+            FEE_em_params, FEE_valid, surf_points_dict, intersected_inds, move_dir = self.GETs[GET_ID].update_map_with_GET_movement(
                 self.elevation_map,
                 position,
                 self.cell_n,
@@ -593,12 +594,17 @@ class ElevationMap:
             # Just using T_MG1 for now to perform soil erosion. This shouldn't matter as long as our ROI is large enough
             # The factor of 5 here is a bit of a hack to get the soil to erode more quickly since we aren't accounting for v_0
             DT = dt * 5.0 # TODO: This should probably be passed in to the function
+            m_dir = None
+            move_dir_index = 0
             if self.param.use_soil_erosion:
                 # Perform erosion as many times as necessary to cover the dT time interval given the maximum erosion time step
                 while DT > 0:
                     dT = min(DT, self.param.soil_erosion_maximum_dt)
                     DT -= dT
-                    self.perform_soil_erosion(GET_ID, T_MG1, intersected_inds, dT)
+                    if move_dir is not None:
+                        m_dir = move_dir[move_dir_index % len(move_dir)]
+                        move_dir_index += 1
+                    self.perform_soil_erosion(GET_ID, T_MG1, intersected_inds, dT, move_dir=m_dir)
 
             # Warning this was checking if surf_points_dict was none to determine if this was a valid FEE measurement, but
             # this was resulting in erosion being applied to the map and not excluding the blade. So now we are checking if
@@ -652,6 +658,7 @@ class ElevationMap:
                             T_MG: cp._core.core.ndarray,
                             GET_inds: cp._core.core.ndarray,
                             dt: float,
+                            move_dir: cp._core.core.ndarray = None,
     ):
         """Perform soil erosion on the map around the current position of the blade. (different than erosion plugin)
         This will only erode the loose soil layer and is only an approximation of the actual erosion process
@@ -661,6 +668,7 @@ class ElevationMap:
             T_MG (np.ndarray)(4,4):         Transformation matrix from the GET frame to the map frame
             GET_inds (np.ndarray)(n,2):     Indicies of the GET blade
             dt (float):                     Time step for erosion
+            move_dir (np.ndarray)(2,):      Direction of the GET movement in the map frame
         Returns:
             None:
         """
@@ -669,6 +677,26 @@ class ElevationMap:
         GET_mask = cp.ones((self.cell_n, self.cell_n), dtype=cp.bool_)
         if GET_inds is not None:
             GET_mask[GET_inds[:,0], GET_inds[:,1]] = False
+        
+        if move_dir is not None:
+            # Define the direction of erosion to be the sign of
+            # the movement direction of the blade
+            erode_dir = np.sign(move_dir)
+            # If any of erode_dir is zero, then we will set it to 1
+            erode_dir[erode_dir == 0] = 1
+            # Convert to cupy
+            erode_dir = cp.asarray(erode_dir, dtype=np.int8)
+        else:
+            # If no movement direction is provided, then we will use the direction of the blade normal
+            # to determine the direction of erosion
+            warnings.warn("No movement direction provided for soil erosion. Using blade normal to determine direction of erosion.")
+            erode_dir = np.sign(T_MG[0:2, 2])
+            # If any of erode_dir is zero, then we will set it to 1
+            erode_dir[erode_dir == 0] = 1
+            # Convert to cupy
+            erode_dir = cp.asarray(erode_dir, dtype=np.int8)
+        
+        # print("Performing soil erosion in direction: ", erode_dir)
 
         # Define a Rectanguar ROI in frame G around the blade to perform erosion
         dx = self.param.erosion_ROI_dx/2.0
@@ -702,7 +730,7 @@ class ElevationMap:
                 # Finally convert to cupy after interacting with shapely
                 ROI_bbox_inds = cp.asarray(ROI_bbox_inds[valid_inds], dtype=cp.int32)
                 # Perform erosion on the cells within the diagonal
-                self.soil_erosion_kernel(ROI_bbox_inds, dt, GET_mask, self.elevation_map, size=(ROI_bbox_inds.shape[0]))
+                self.soil_erosion_kernel(ROI_bbox_inds, erode_dir, dt, GET_mask, self.elevation_map, size=(ROI_bbox_inds.shape[0]))
         
     
     def get_GET_depth(self,

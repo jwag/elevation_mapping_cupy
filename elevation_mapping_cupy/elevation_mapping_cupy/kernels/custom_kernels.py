@@ -451,7 +451,7 @@ def average_map_kernel(width, height, max_variance, initial_variance):
 
 def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_min):
     soil_erosion_kernel = cp.ElementwiseKernel(
-        in_params="raw T inds, raw U dt, raw B GET_mask",
+        in_params="raw T inds, raw I erode_dir, raw U dt, raw B GET_mask",
         out_params="raw U map",
         preamble=string.Template(
             """
@@ -514,9 +514,12 @@ def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_m
             // Indicies of the cells we are considering for erosion
             // idx is the center cell, idx_px is the cell one larger in x direction,
             // and idx_py is the cell one larger in y direction
+            // idx is the center cell, idx_px is the cell offset by one in the direction erode_dir[0]
+            // and idx_py is the cell offset by one in the direction erode_dir[1]
+            // Note that the erode_dir is a boolean array that indicates the direction of erosion
             int idx = get_idx(inds[i * 2], inds[i * 2 + 1]);
-            int idx_px = get_idx(inds[i * 2] + 1, inds[i * 2 + 1]);
-            int idx_py = get_idx(inds[i * 2], inds[i * 2 + 1] + 1);
+            int idx_px = get_idx(inds[i * 2] + 1 * erode_dir[0], inds[i * 2 + 1]);
+            int idx_py = get_idx(inds[i * 2], inds[i * 2 + 1] + 1  * erode_dir[1]);
             U valid = map[get_map_idx(idx, 2)];
             bool mask = GET_mask[idx]; // False when the GET occupies the cell
             

@@ -591,6 +591,7 @@ def sweep_thin_poly_mesh(
     neg_verts = np.empty((0,3))
     neg_faces = np.empty((0,3))
     last_pos_sweep, last_neg_sweep, lost_pos_sweep_cap_offset, lost_neg_sweep_cap_offset = 0, 0, 0, 0
+    pos_translation, neg_translation = None, None
     # TODO: Add functionality to do all sweeps in parallel (as is in the original function)
     # This could speed up things in the case that there are no intersections and the movement is assumed to be 
     # all positive or negative
@@ -612,6 +613,7 @@ def sweep_thin_poly_mesh(
                 offset = len(pos_verts)
                 # Add the verticies for the positive sweep
                 pos_verts = np.concatenate((pos_verts, p_verts[0:n_new_pos_points]), axis=0)
+                pos_start_centroid = p_verts[0:n_new_pos_points].mean(axis=0)
                 # Add the start cap faces (always?)
                 cap_face = get_cap_face(p_boundary, flip_normals = True)
                 pos_faces = np.concatenate((pos_faces, cap_face+offset), axis=0)
@@ -620,15 +622,19 @@ def sweep_thin_poly_mesh(
                 # TODO: Could combine with above concat
                 pos_verts = np.concatenate((pos_verts, p_verts[n_new_pos_points:]), axis=0)
                 pos_faces = np.concatenate((pos_faces, pos_face_sweep+offset), axis=0)
+                pos_end_centroid = p_verts[n_new_pos_points:].mean(axis=0)
                 # Add cap faces at the end of the sweep to close the volume
                 cap_face = get_cap_face(p_boundary, flip_normals = False)
                 pos_faces = np.concatenate((pos_faces, cap_face+len(pos_verts)-n_new_pos_points), axis=0)
+                pos_translation = pos_end_centroid - pos_start_centroid
+                
 
                 # Add the verticies for the negative sweep
                 neg_face_sweep, n_new_neg_points = get_swept_edges(n_boundary, roll_dirs[i], convex_interp, flip_normals = True)
                 offset = len(neg_verts)
                 # Add the verticies for the negative sweep
                 neg_verts = np.concatenate((neg_verts, n_verts[0:n_new_neg_points]), axis=0)
+                neg_start_centroid = n_verts[0:n_new_neg_points].mean(axis=0)
                 # Add the start cap faces (always?)
                 cap_face = get_cap_face(n_boundary, flip_normals = False)
                 neg_faces = np.concatenate((neg_faces, cap_face+offset), axis=0)
@@ -636,9 +642,11 @@ def sweep_thin_poly_mesh(
                 offset = len(neg_verts)-n_new_neg_points
                 neg_verts = np.concatenate((neg_verts, n_verts[n_new_neg_points:]), axis=0)
                 neg_faces = np.concatenate((neg_faces, neg_face_sweep+offset), axis=0)
+                neg_end_centroid = n_verts[n_new_neg_points:].mean(axis=0)
                 # Add cap faces at the end of the sweep to close the volume
                 cap_face = get_cap_face(n_boundary, flip_normals = True)
                 neg_faces = np.concatenate((neg_faces, cap_face+len(neg_verts)-n_new_neg_points), axis=0)
+                neg_translation = neg_end_centroid - neg_start_centroid
 
         else:
             face_sweep, n_new_points = get_swept_edges(boundary, roll_dirs[i], convex_interp, flip_normals = not sides[i])
@@ -747,7 +755,7 @@ def sweep_thin_poly_mesh(
     #         assert swept_mesh.is_volume
     #         assert swept_mesh.body_count == 1
 
-    return pos_swept_mesh, neg_swept_mesh
+    return pos_swept_mesh, pos_translation, neg_swept_mesh, neg_translation
 
 def projected_mesh_boundary(mesh: Trimesh, axis: int = 2) -> Dict:
     """
@@ -1665,6 +1673,7 @@ class GETMovement:
                                              i.e. not just a projection.
             surf_points_dict (dict):         A dictionary of the surface points for each intersected cell {[points[n,2]], [map_inds[n,2]]}
             intersected_inds (np.ndarray) (:,2): The indices of the intersected cells
+            move_dir (np.ndarray) (3,):     The direction of movement of the blade
         """
         assert n_steps == O_r_OG.shape[0], "The number of time steps must match the number of blade positions"
         # Obtain a map frame aligned bounding box for the swept volume
@@ -1705,6 +1714,7 @@ class GETMovement:
         FEE_valid = False
         surf_points_dict = None
         intersected_inds = None
+        move_dir = None
         dV_Q = 0.0
         # Debugging Override
         # update_elevation = True
@@ -1746,8 +1756,8 @@ class GETMovement:
                     FEE_proj_params = self.set_blade_depth_calc_params(FEE_em_params, GET_plane_origin, translation)
                     FEE_valid = True
                 # Find the direction of material movement
-                move_dir, valid_movement = self.material_movement_direction(normal, translation, normal_weight=self.param.move_dir_normal_weight)
-                if not valid_movement:
+                move_dir = self.material_movement_direction(normal, translation, normal_weight=self.param.move_dir_normal_weight)
+                if move_dir is None:
                     warnings.warn("Invalid movement direction, skipping update of elevation map")
                 else:
                     # Remove the material from the cells that are intersected
@@ -1876,7 +1886,7 @@ class GETMovement:
                     FEE_em_params_proj['V_Q'] = V_Q
                     FEE_em_params_proj['Q'] = Q
                     FEE_em_params_proj['d_step'] = np.arange(n_steps)
-        return FEE_em_params_proj, FEE_proj_params, FEE_valid, surf_points_dict, intersected_inds
+        return FEE_em_params_proj, FEE_proj_params, FEE_valid, surf_points_dict, intersected_inds, move_dir
 
     def material_movement_direction(self, normal, translation, normal_weight=0.5):
         """
@@ -1898,7 +1908,7 @@ class GETMovement:
             normal_weight (float):          The weight to give to the normal vector. Default is 0.5
         Returns:
             move_dir (np.ndarray) (2,):     The direction of material movement in the xy plane (normalized)
-            valid (bool):                   True if the movement direction is valid, False otherwise
+                                            will return none if the movement direction is invalid
         """
         # Normalize the vectors
         normal_norm = np.linalg.norm(normal)
@@ -1927,14 +1937,13 @@ class GETMovement:
         move_dir_norm = np.linalg.norm(move_dir)
         if move_dir_norm != 0:
             move_dir = move_dir / move_dir_norm
-            valid = True
         else:
             warnings.warn("Movement direction is zero. Don't move material")
             # This could be because the swept volue is actually a plane and the normal and translation vectors are orthogonal
             # Then we have pierced the soil, but not moved any material
-            valid = False
+            move_dir = None
         
-        return move_dir, valid
+        return move_dir
 
     def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, M_r_MG, n_steps, var_h, roll=None, FEE=True):
         """
@@ -1963,7 +1972,7 @@ class GETMovement:
             # Get relative roll between the two poses, this is used to generate a convex sweep
             roll, _, _ = get_ext_euler_angles(transforms[0,:3,:3], xp=np)
         roll_dirs = np.array([roll]) >= 0
-        pos_swept_mesh, neg_swept_mesh = sweep_thin_poly_mesh(self.GET_mesh, transforms, roll_dirs=roll_dirs, convex_interp=True)
+        pos_swept_mesh, pos_translation, neg_swept_mesh, neg_translation = sweep_thin_poly_mesh(self.GET_mesh, transforms, roll_dirs=roll_dirs, convex_interp=True)
         # T_OG0 = T_OM @ T_MG0
         # Where a point in represented in O can be obtained from a point represented in M by translating by -map_center
         T_OG0 = T_MG0.copy()
@@ -1977,6 +1986,12 @@ class GETMovement:
         GET_plane_origin = T_OG0[:3, :3]@self.GET_geometry_origin + T_OG0[:3, 3]
         # Also get the translation between the two poses of the GET
         translation = T_MG1[:3, 3] - T_MG0[:3, 3]
+        # If the mesh had a self intersection then we want to use the translations of the split meshes at the centroids
+        # But if not then just use the translation of the original mesh
+        if pos_translation is None:
+            pos_translation = translation
+        if neg_translation is None:
+            neg_translation = translation
         # Move the swept volume poistion to the map origin frame
         O_r_OG = M_r_MG - map_center.T
 
@@ -1987,6 +2002,7 @@ class GETMovement:
         FEE_valid = False
         surf_points_dict = None
         intersected_inds = None
+        move_dir = None
         FEE_em_params_pos = None
         FEE_em_params_neg = None
         if pos_swept_mesh is not None and neg_swept_mesh is not None and FEE==True:
@@ -1995,35 +2011,42 @@ class GETMovement:
         if pos_swept_mesh is not None:
             # Move the swept volume to the map origin frame
             pos_swept_mesh.apply_transform(T_OG0)
-            FEE_em_params_pos, self.pos_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_pos, intersected_inds_pos = self.update_map_with_swept_volume(pos_swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params_pos, self.pos_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_pos, intersected_inds_pos, move_dir_pos = self.update_map_with_swept_volume(pos_swept_mesh, normal, pos_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         if neg_swept_mesh is not None:
             # Flip the direction of the normal for the negative swept volume
             normal = -normal
             # Move the swept volume to the map origin frame
             neg_swept_mesh.apply_transform(T_OG0)
-            FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_neg, intersected_inds_neg = self.update_map_with_swept_volume(neg_swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_neg, intersected_inds_neg, move_dir_neg = self.update_map_with_swept_volume(neg_swept_mesh, normal, neg_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         if FEE_em_params_pos is not None and FEE_em_params_neg is not None:
             # Could support this elsewhere by returning both and then combining them after computing the FEE force
             warnings.warn("Combining the FEE parameters for the positive and negative swept volumes is not yet implemented. Not using either.")
             FEE_em_params = None
             FEE_valid = False
             surf_points_dict = None
-            intersected_inds = np.concatenate((intersected_inds_pos, intersected_inds_neg), axis=0)
         elif FEE_em_params_pos is not None:
             FEE_em_params = FEE_em_params_pos
             FEE_valid = FEE_valid_pos
             surf_points_dict = surf_points_dict_pos
-            intersected_inds = intersected_inds_pos
         elif FEE_em_params_neg is not None:
             # Need to support this by including the translation direction of the portion of the swept volume
             warnings.warn("Negative swept volume FEE parameters are only partially tested")
             FEE_em_params = FEE_em_params_neg
             FEE_valid = FEE_valid_pos
             surf_points_dict = surf_points_dict_neg
+        
+        if pos_swept_mesh is not None and neg_swept_mesh is not None:
+            intersected_inds = np.concatenate((intersected_inds_pos, intersected_inds_neg), axis=0)
+            move_dir = [move_dir_pos, move_dir_neg]
+        elif pos_swept_mesh is not None:
+            intersected_inds = intersected_inds_pos
+            move_dir = [move_dir_pos]
+        elif neg_swept_mesh is not None:
             intersected_inds = intersected_inds_neg
+            move_dir = [move_dir_neg]
         
         # Only return positive FEE parameters for now
-        return FEE_em_params, FEE_valid, surf_points_dict, intersected_inds
+        return FEE_em_params, FEE_valid, surf_points_dict, intersected_inds, move_dir
 
 
 if __name__ == "__main__":
