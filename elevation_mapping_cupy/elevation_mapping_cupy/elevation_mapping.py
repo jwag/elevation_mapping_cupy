@@ -567,11 +567,11 @@ class ElevationMap:
         T_MG1 = np.asarray(T_MG1, dtype=self.data_type)
         
         with self.map_lock:
-            position = self.get_position()
+            center = self.get_position()
             # TODO: Make the varh derived from the pose uncertainty and use a sensor model
             FEE_em_params, FEE_valid, surf_points_dict, intersected_inds, move_dir = self.GETs[GET_ID].update_map_with_GET_movement(
                 self.elevation_map,
-                position,
+                center,
                 self.cell_n,
                 self.resolution,
                 T_MG0,
@@ -590,6 +590,9 @@ class ElevationMap:
             #     # The first entry in map_inds is the map inds of the intersected cells
             #     # keeping as numpy as we will have to perform numpy operations with shapely later
             #     intersected_inds = np.array([map_ind[0] for map_ind in surf_points_dict['map_inds']])
+            # Get the height of the GET blade in the map frame
+            map_size = np.array([self.cell_n, self.cell_n], dtype=np.int32)
+            edge_inds, edge_heights = self.GETs[GET_ID].find_cutting_edge(T_MG1, center,  map_size, self.resolution)
 
             # Just using T_MG1 for now to perform soil erosion. This shouldn't matter as long as our ROI is large enough
             # The factor of 5 here is a bit of a hack to get the soil to erode more quickly since we aren't accounting for v_0
@@ -604,7 +607,7 @@ class ElevationMap:
                     if move_dir is not None:
                         m_dir = move_dir[move_dir_index % len(move_dir)]
                         move_dir_index += 1
-                    self.perform_soil_erosion(GET_ID, T_MG1, intersected_inds, dT, move_dir=m_dir)
+                    self.perform_soil_erosion(GET_ID, T_MG1, intersected_inds, edge_inds, edge_heights, dT, move_dir=m_dir)
 
             # Warning this was checking if surf_points_dict was none to determine if this was a valid FEE measurement, but
             # this was resulting in erosion being applied to the map and not excluding the blade. So now we are checking if
@@ -656,7 +659,9 @@ class ElevationMap:
     def perform_soil_erosion(self,
                             GET_ID: str,
                             T_MG: cp._core.core.ndarray,
+                            intersected_inds: cp._core.core.ndarray,
                             GET_inds: cp._core.core.ndarray,
+                            GET_ind_heights: cp._core.core.ndarray,
                             dt: float,
                             move_dir: cp._core.core.ndarray = None,
     ):
@@ -667,16 +672,26 @@ class ElevationMap:
             GET_ID (str):                   GET ID
             T_MG (np.ndarray)(4,4):         Transformation matrix from the GET frame to the map frame
             GET_inds (np.ndarray)(n,2):     Indicies of the GET blade
+            GET_ind_heights (np.ndarray)(n,):  Heights of the GET blade in the map frame for each index
             dt (float):                     Time step for erosion
             move_dir (np.ndarray)(2,):      Direction of the GET movement in the map frame
         Returns:
             None:
         """
 
-        # Create mask of the GET blade where no erosion should occur
-        GET_mask = cp.ones((self.cell_n, self.cell_n), dtype=cp.bool_)
+        # Create mask indicating where the GET blade is to prevent erosion
+        GET_mask = cp.zeros((self.cell_n, self.cell_n), dtype=cp.bool_)
+        # GET_heights should be in map origin frame
+        GET_heights = cp.zeros((self.cell_n, self.cell_n), dtype=self.data_type)
         if GET_inds is not None:
-            GET_mask[GET_inds[:,0], GET_inds[:,1]] = False
+            GET_mask[GET_inds[:,0], GET_inds[:,1]] = True
+            GET_heights[GET_inds[:,0], GET_inds[:,1]] = GET_ind_heights[:,0]
+        
+        # Also mark the intersected cells as occupied by the GET using the height of the terrain
+        if intersected_inds is not None:
+            GET_mask[intersected_inds[:,0], intersected_inds[:,1]] = True
+            # Get the heights of the terrain at the intersected cells
+            GET_heights[intersected_inds[:,0], intersected_inds[:,1]] = self.elevation_map[0][intersected_inds[:,0], intersected_inds[:,1]]
         
         if move_dir is not None:
             # Define the direction of erosion to be the sign of
@@ -730,7 +745,7 @@ class ElevationMap:
                 # Finally convert to cupy after interacting with shapely
                 ROI_bbox_inds = cp.asarray(ROI_bbox_inds[valid_inds], dtype=cp.int32)
                 # Perform erosion on the cells within the diagonal
-                self.soil_erosion_kernel(ROI_bbox_inds, erode_dir, dt, GET_mask, self.elevation_map, size=(ROI_bbox_inds.shape[0]))
+                self.soil_erosion_kernel(ROI_bbox_inds, erode_dir, dt, GET_mask, GET_heights, self.elevation_map, size=(ROI_bbox_inds.shape[0]))
         
     
     def get_GET_depth(self,

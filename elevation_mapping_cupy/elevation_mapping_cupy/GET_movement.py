@@ -190,9 +190,10 @@ def boundary_edges(n_verts):
     edges = np.lib.stride_tricks.sliding_window_view(verts, 2)
     return edges
 
-def split_intersected_meshes(face, intersections, intersected_edges, piercing_verts, pierced_verts, pierced_mesh, T_piercing_pierced):
+def split_intersected_meshes(face, intersections, intersected_edges, piercing_verts, pierced_verts, pierced_mesh, T_piercing_pierced, relative_to="piercing"):
     # Pierced mesh is the mesh that is being pierced by the piercing mesh, i.e. it creates a line of intersection in the middle of the face
     # of the pierced mesh. Both meshes must be split into two parts to create a positive and negative swept volume.
+    # The relative_to arg is use to determine which of the split meshes is the positive and negative swept volume
 
     # Convenience function
     def find_intersected_face_inds(face, intersected_edges):
@@ -314,7 +315,12 @@ def split_intersected_meshes(face, intersections, intersected_edges, piercing_ve
 
     assert piercing_mesh_side1 ==  (not piercing_mesh_side2), "piercing_mesh_side1 must be opposite to piercing_mesh_side2"
 
-    if piercing_mesh_side1:
+    if relative_to == "piercing":
+        pos_is_verts1 = not piercing_mesh_side1
+    else:
+        pos_is_verts1 = piercing_mesh_side1
+
+    if pos_is_verts1:
         pos_verts = verts1
         pos_boundary = boundary1
         neg_verts = verts2
@@ -404,7 +410,8 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         T21 = hom_inv(T12)
         pos_verts, pos_boundary, neg_verts, neg_boundary = split_intersected_meshes(face, intersections, intersected_edges,
                                                                                     piercing_verts=verts1, pierced_verts=verts2,
-                                                                                    pierced_mesh=poly_mesh2, T_piercing_pierced = T12)
+                                                                                    pierced_mesh=poly_mesh2, T_piercing_pierced = T12,
+                                                                                    relative_to="piercing")
         # Plot positive and negative surfaces
         pstride = len(pos_verts)//2
         pfaces = simple_polygon_triangulation(pstride)
@@ -438,7 +445,8 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         intersected_edges = boundary[intersected_lines]
         pos_verts, pos_boundary, neg_verts, neg_boundary = split_intersected_meshes(face, intersections, intersected_edges,
                                                                                     piercing_verts=verts1, pierced_verts=verts2,
-                                                                                    pierced_mesh=poly_mesh2, T_piercing_pierced = T12)
+                                                                                    pierced_mesh=poly_mesh2, T_piercing_pierced = T12,
+                                                                                    relative_to="piercing")
         test = 1
     elif mesh2_pierces_mesh1:
         # Split mesh2 into two parts
@@ -449,7 +457,8 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         intersected_edges = boundary[intersected_lines]
         pos_verts, pos_boundary, neg_verts, neg_boundary = split_intersected_meshes(face, intersections, intersected_edges,
                                                                                     piercing_verts=verts2, pierced_verts=verts1,
-                                                                                    pierced_mesh=poly_mesh1, T_piercing_pierced = hom_inv(T12))
+                                                                                    pierced_mesh=poly_mesh1, T_piercing_pierced = hom_inv(T12),
+                                                                                    relative_to="pierced")
     
     return (pos_verts, pos_boundary, neg_verts, neg_boundary), valid_intersect
 
@@ -912,7 +921,7 @@ class GETMovement:
         # Now generate the GET geometry
         # TODO: Add support for multiple planar GET surfaces at different angles
         # The GET_origin is the origin of the GET geometry in the blade frame (should be zeros for now)
-        self.GET_mesh, self.GET_geometry_origin = self.GET_model(**self.GET_params)
+        self.GET_mesh, self.GET_geometry_origin, self.cutting_edge_origin, self.cutting_edge_vector = self.GET_model(**self.GET_params)
 
         # Initialize Parameters Used for FEE Projection
         self.pos_swept_mesh_FEE_projection_params = None
@@ -963,6 +972,10 @@ class GETMovement:
         # Origin is assumed to be at center of the GET currently
         blade_origin = np.array([0.0, 0.0, 0.0], dtype=self.data_type)
 
+        # Define the primary cutting edge of the blade so that it can be tracked for erosion purposes
+        cutting_edge_origin = vertices[2, :].copy()
+        cutting_edge_vector = vertices[3, :] - vertices[2, :]
+
         # # Rotate the blade about the Y axis at the origin by blade_angle degrees ccw
         # # The blade is rotated about the Y axis at the origin by blade_angle degrees ccw about the Y axis.
         # # blade_angle_deg=-10, blade_origin=[1.634, 0.0, 0.060+0.265]
@@ -974,7 +987,7 @@ class GETMovement:
         # if apply_transform:
         #     blade.apply_transform(T_CB)
 
-        return blade, blade_origin
+        return blade, blade_origin, cutting_edge_origin, cutting_edge_vector
     
     def map_index_to_point_xy(self, indices, center, cell_n, resolution):
         """
@@ -989,11 +1002,16 @@ class GETMovement:
             points_xy (np.ndarray) (n,2):          The 2D points in the map frame
         """
         # Convert indices to points
-        points_xy = (indices - cell_n / 2) * resolution + center[:2].reshape(1, 2)
+        # Need to handle the case where cell_n is even or odd
+        if cell_n % 2 == 0:
+            points_xy = (indices - cell_n / 2.0 + 0.5) * resolution + center[:2].reshape(1, 2)
+        else:
+            points_xy = (indices - cell_n / 2.0) * resolution + center[:2].reshape(1, 2)
+        
         points_xy = points_xy.astype(self.data_type)
         return points_xy
     
-    def get_map_index(self, points, center, cell_n, resolution, round_dir="down"):
+    def get_map_index(self, points, center, cell_n, resolution, round_dir=None):
         """
         Convert points in map frame to map indices.
         Since elevation_map is itself represented in the map origin frame, O, 
@@ -1003,23 +1021,38 @@ class GETMovement:
         Additionally, (0,0) in the map origin frame corresponds to the middle of
         elevation_map with cell_n/2 cells in each direction.
         See custom_kernels.py map_utils kernel: get_x_idx() for more information.
+        The tricky part about all of this is that the origin frame is at a cell center
+        if cell_n is odd, but at a cell corner if cell_n is even. This means that the indices
+        need to be rounded differently depending on the resolution and the cell_n.
         Args:
             points (np.ndarray) (n,3):          The points in the map frame
             center (np.ndarray) (3,):           The center of the map in the map frame
             cell_n (int):                       The number of cells in the map
             resolution (float):                 The resolution of the map
-            round_dir (str):                    The direction to round the indices. Default is "down".
+            round_dir (str):                    The direction to round the indices. Default is None
+                                                which means the cell_n will be used to determine the rounding
+                                                direction.
         Returns:
             indices (np.ndarray) (n,2):         The indices of the points in the map (rounded down)
             points_centered (np.ndarray) (n,3): The points represented in the map origin frame
         """
         points_centered = points - center.reshape(1, 3)
         # Get the indices of the points in the map
-        inds = (points_centered[:,0:2] / resolution + cell_n / 2)
-        if round_dir == "down":
+        inds = (points_centered[:,0:2] / resolution + cell_n / 2.0)
+        if round_dir is None:
+            # If cell_n is even then round down, if odd then round to nearest
+            if cell_n % 2 == 0:
+                round_dir = "floor"
+            else:
+                round_dir = "round"
+        if round_dir == "floor":
             indices = inds.astype(np.int32)
-        elif round_dir == "up":
+        elif round_dir == "ceil":
             indices = np.ceil(inds).astype(np.int32)
+        elif round_dir == "round":
+            indices = np.round(inds).astype(np.int32)
+        else:
+            raise ValueError("round_dir should be 'floor', 'ceil', or 'round'")
         indices = np.clip(indices, 0, cell_n - 1)
         return indices, points_centered
     
@@ -1048,8 +1081,11 @@ class GETMovement:
         # Alternatively: Sort points to find min point along x, y, and z and max point along x, y, and z
         # sort_inds = np.lexsort((points[:,1], points[:,0], points[:,2]))
         # Round down for min and up for max to ensure a conservative bounding box with a minimum 1 cell border
-        indices_min, point_min_centered = self.get_map_index(points_min, center, cell_n, resolution, round_dir="down")
-        indices_max, point_max_centered = self.get_map_index(points_max, center, cell_n, resolution, round_dir="up")
+        indices_min, point_min_centered = self.get_map_index(points_min, center, cell_n, resolution, round_dir="floor")
+        indices_max, point_max_centered = self.get_map_index(points_max, center, cell_n, resolution, round_dir="ceil")
+        # Increase size of bounding box by 1 cell in each direction to ensure that the bounding box captures deposit locations
+        indices_min = np.clip(indices_min - 1, 0, cell_n - 1)
+        indices_max = np.clip(indices_max + 1, 0, cell_n - 1)
         indices = np.concatenate((indices_min, indices_max), axis=0)
         points_centered = np.concatenate((point_min_centered, point_max_centered), axis=0)
         return indices, points_centered
@@ -1071,13 +1107,20 @@ class GETMovement:
 
         dx = dx / step
         dy = dy / step
+        # Need to round differently depending on whether cell_n is even or odd
+        # If cell_n is even then round down, if odd then round to nearest integer
+        if map_size[0] % 2 == 0:
+            round_fn = int
+        else:
+            round_fn = round
+        # Debugging: override to what it was
+        # round_fn = round
         for i, intersected_cell_ind in enumerate(intersected_cells):
             x = intersected_cell_ind[0]
             y = intersected_cell_ind[1]
             while True:
-                # Was a floor/int(), but since we are dealing with cell centers this should round to the nearest cell center
-                xind = round(x)
-                yind = round(y)
+                xind = round_fn(x)
+                yind = round_fn(y)
                 if (occ_map[xind, yind] == False):
                     deposit_location[i] = np.array([xind, yind])
                     break
@@ -1087,6 +1130,72 @@ class GETMovement:
                     raise ValueError("Deposit location not found")
                     break
         return deposit_location
+    
+    def find_cutting_edge(self, T_MG, center, map_size, resolution):
+        # Use the cutting edge origin and vector to find the cutting edge in the map origin frame
+        start_pos = T_MG[:3,:3] @ self.cutting_edge_origin + T_MG[:3,3]
+        end_pos = T_MG[:3,:3] @ (self.cutting_edge_origin + self.cutting_edge_vector) + T_MG[:3,3]
+        # Get the cutting edge vector in the map origin frame
+        # The cutting edge vector is in the map frame so we need to transform it to the map origin frame
+        # Since it is a direction vector we only need to transform the direction
+        move_dir = T_MG[:3,:3] @ self.cutting_edge_vector
+        # Normalize the direction vector
+        move_dir = move_dir / np.linalg.norm(move_dir)
+
+        dx = move_dir[0]
+        dy = move_dir[1]
+
+        # Get the cutting edge origin in the map origin frame
+        edge_origin_inds, start_pos = self.get_map_index(start_pos, center, map_size[0], self.param.resolution)
+        # Get the cutting edge end in the map origin frame
+        edge_end_inds, end_pos = self.get_map_index(end_pos, center, map_size[0], self.param.resolution)
+
+        # Obtain the slope of the cutting edge in the map frame with respect to the map xy plane
+        edge_slope = move_dir[2] / np.linalg.norm(move_dir[0:2])
+        edge_length = np.linalg.norm(self.cutting_edge_vector)
+        # This is a digitial differential analyzer (DDA) line algorithm
+        # see https://en.wikipedia.org/wiki/Digital_differential_analyzer_(graphics_algorithm)
+        if (abs(dx) >= abs(dy)):
+            step = abs(dx)
+        else:
+            step = abs(dy)
+
+        dx = dx / step
+        dy = dy / step
+        x = edge_origin_inds[0,0]
+        y = edge_origin_inds[0,1]
+        edge_inds = np.empty((0,2), dtype=int)
+        edge_heights = np.empty((0,1), dtype=self.data_type)
+        # Need to round differently depending on whether cell_n is even or odd
+        # If cell_n is even then round down, if odd then round to nearest integer
+        if map_size[0] % 2 == 0:
+            round_fn = int
+        else:
+            round_fn = round
+        # Debug override
+        # round_fn = round
+        while True:
+            xind = round_fn(x)
+            yind = round_fn(y)
+            edge_inds = np.append(edge_inds, np.array([[xind, yind]]), axis=0)
+            edge_dist_xy = resolution * np.sqrt((x - edge_origin_inds[0,0])**2 + (y - edge_origin_inds[0,1])**2)
+            # Get the height of the cutting edge at this point using z = mx + b
+            edge_height = edge_slope * edge_dist_xy + start_pos[0,2]
+            edge_heights = np.append(edge_heights, np.array([[edge_height]]), axis=0)
+            # Check if the point is the end point
+            if (xind == edge_end_inds[0,0] and yind == edge_end_inds[0,1]):
+                break
+            x = x + dx
+            y = y + dy
+            # Check if the length of the cutting edge is exceeded, i.e. we have reached
+            # the end of the cutting edge. This is needed in addition to the edge_end_inds check
+            # for some reason that i don't quite understand.
+            if (edge_dist_xy > edge_length):
+                break
+            if (x < 0 or x >= map_size[0] or y < 0 or y >= map_size[1]):
+                raise ValueError("Blade cutting edge outside of map bounds")
+                break
+        return edge_inds, edge_heights
     
     def get_xy_GET_distance(self, inds, point_z, t_dir, GET_plane_origin, normal, cell_n, resolution):
         """

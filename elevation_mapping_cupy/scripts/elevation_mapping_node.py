@@ -80,8 +80,10 @@ class ElevationMappingNode(Node):
             # Initialize map to have a zero elevaiton everywere
             corner = self.param.true_map_length/2.0
             map_z_init = 0.0
+            loose_depth = 0.4
             init_points = np.array([[corner,-corner,map_z_init], [corner,corner,map_z_init], [-corner,corner,map_z_init], [-corner,-corner,map_z_init]])
             self._map.initialize_map(init_points, method="linear")
+            self._map.elevation_map[7,:] = loose_depth
 
     def initialize_ros(self) -> None:
         self._tf_buffer = tf2_ros.Buffer()
@@ -296,6 +298,7 @@ class ElevationMappingNode(Node):
 
     def safe_lookup_transform(self, target_frame, source_frame, time):
         try:
+            # TODO: Figure out why this errors sometimes
             return self._tf_buffer.lookup_transform(
                 target_frame,
                 source_frame,

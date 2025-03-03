@@ -451,7 +451,7 @@ def average_map_kernel(width, height, max_variance, initial_variance):
 
 def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_min):
     soil_erosion_kernel = cp.ElementwiseKernel(
-        in_params="raw T inds, raw I erode_dir, raw U dt, raw B GET_mask",
+        in_params="raw T inds, raw I erode_dir, raw U dt, raw B GET_mask, raw U GET_heights",
         out_params="raw U map",
         preamble=string.Template(
             """
@@ -521,19 +521,22 @@ def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_m
             int idx_px = get_idx(inds[i * 2] + 1 * erode_dir[0], inds[i * 2 + 1]);
             int idx_py = get_idx(inds[i * 2], inds[i * 2 + 1] + 1  * erode_dir[1]);
             U valid = map[get_map_idx(idx, 2)];
-            bool mask = GET_mask[idx]; // False when the GET occupies the cell
-            
-            if (valid > 0.5 and mask) {
+            // The GET_mask is a boolean array that indicates if the cell has a GET in it (true if it does)
+            // The GET_heights are the heights of the GET
+            // Initialize the maximum slip height to 0. Will be overriden
+            float16 h_slip_max = 0.0;
+            if (valid > 0.5) {
                 // perform slip calcuation for x direction then y direction
                 for (int j = 0; j < 2; j++) {
                     U H = map[get_map_idx(idx, 0)];
                     U L = map[get_map_idx(idx, 7)];
+                    bool mask = GET_mask[idx];
                     int idx_ = j == 0 ? idx_px : idx_py;
                     U H_ = map[get_map_idx(idx_, 0)];
                     U L_ = map[get_map_idx(idx_, 7)];
-                    U valid_ = map[get_map_idx(idx_, 2)];
                     bool mask_ = GET_mask[idx_];
-                    if (valid_ > 0.5 and mask_) {
+                    U valid_ = map[get_map_idx(idx_, 2)];
+                    if (valid_ > 0.5) {
                         // TODO: Determine if we should be using the half precision floats in this code
                         // float16 are used in the other kernels, but the functions being called here are all float32 I think
                         // https://docs.nvidia.com/cuda/cuda-math-api/group__CUDA__MATH____HALF__COMPARISON.html#group__CUDA__MATH____HALF__COMPARISON
@@ -543,13 +546,31 @@ def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_m
                         int slip_dir = delta_H > 0 ? 1 : -1;
                         // Now modify this calculation so that slip is only possible if
                         // there is any loose soil in the cell where the soil is flowing from
+                        // Soil is flowing from idx to idx_
                         if (slip_dir == 1) {
                             delta_H = fminf(L, delta_H);
                             //delta_H = hmax(L, delta_H);
+                            // The absolute maximum slip height is the height difference
+                            // between the two cells.
+                            h_slip_max = delta_H;
+                            if (mask_) // idx_ cell has GET and soil is flowing into it
+                            {
+                                // Limit the slip height so that soil may flow up to the bottom of the GET
+                                h_slip_max = fminf(h_slip_max, fmaxf(GET_heights[idx_] - H_, 0.0));
+                            }
                         }
+                        // Soil is flowing from idx_ to idx
                         else {
                             delta_H = fminf(L_, -delta_H);
                             //delta_H = hmin(L_, -delta_H);
+                            // The absolute maximum slip height is the height difference
+                            // between the two cells.
+                            h_slip_max = delta_H;
+                            if (mask) // idx cell has GET and soil is flowing into it
+                            {
+                                // Limit the slip height so that soil may flow up to the bottom of the GET
+                                h_slip_max = fminf(h_slip_max, fmaxf(GET_heights[idx] - H, 0.0));
+                            }
                         }
                         // TODO: Re think this given the nonlinear nature of the safety factor
                         float16 delta_H_min = tanf(${alpha_min}) * ${resolution};
@@ -601,7 +622,8 @@ def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_m
                         // limited by the slip that can be attained at the minimum alpha.
                         // Even this won't fix the problem and you will get "random" spikes in the map resulting from the
                         // entire height difference being eroded around the map.
-                        float16 h_slip_max = h_slip(${alpha_min}, delta_H);
+                        // Combine the limits from the GET and the h_slip calculation
+                        h_slip_max = fminf(h_slip(${alpha_min}, delta_H), h_slip_max);
                         slip_h = fminf(slip_h, h_slip_max);
                         // Update the height and loose_soil of both cells
                         atomicAdd(&map[get_map_idx(idx, 0)], -slip_h*slip_dir);
