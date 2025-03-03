@@ -1824,6 +1824,7 @@ class GETMovement:
         surf_points_dict = None
         intersected_inds = None
         move_dir = None
+        deposit_inds = None
         dV_Q = 0.0
         # Debugging Override
         # update_elevation = True
@@ -1995,7 +1996,11 @@ class GETMovement:
                     FEE_em_params_proj['V_Q'] = V_Q
                     FEE_em_params_proj['Q'] = Q
                     FEE_em_params_proj['d_step'] = np.arange(n_steps)
-        return FEE_em_params_proj, FEE_proj_params, FEE_valid, surf_points_dict, intersected_inds, move_dir
+            # Convert to global index
+            if deposit_inds is not None:
+                deposit_inds = deposit_inds + bb_indices[0]
+
+        return FEE_em_params_proj, FEE_proj_params, FEE_valid, surf_points_dict, intersected_inds, move_dir, deposit_inds
 
     def material_movement_direction(self, normal, translation, normal_weight=0.5):
         """
@@ -2112,6 +2117,7 @@ class GETMovement:
         surf_points_dict = None
         intersected_inds = None
         move_dir = None
+        deposit_inds = None
         FEE_em_params_pos = None
         FEE_em_params_neg = None
         if pos_swept_mesh is not None and neg_swept_mesh is not None and FEE==True:
@@ -2120,13 +2126,13 @@ class GETMovement:
         if pos_swept_mesh is not None:
             # Move the swept volume to the map origin frame
             pos_swept_mesh.apply_transform(T_OG0)
-            FEE_em_params_pos, self.pos_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_pos, intersected_inds_pos, move_dir_pos = self.update_map_with_swept_volume(pos_swept_mesh, normal, pos_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params_pos, self.pos_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_pos, intersected_inds_pos, move_dir_pos, deposit_inds_pos = self.update_map_with_swept_volume(pos_swept_mesh, normal, pos_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         if neg_swept_mesh is not None:
             # Flip the direction of the normal for the negative swept volume
             normal = -normal
             # Move the swept volume to the map origin frame
             neg_swept_mesh.apply_transform(T_OG0)
-            FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_neg, intersected_inds_neg, move_dir_neg = self.update_map_with_swept_volume(neg_swept_mesh, normal, neg_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_neg, intersected_inds_neg, move_dir_neg, deposit_inds_neg = self.update_map_with_swept_volume(neg_swept_mesh, normal, neg_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
         if FEE_em_params_pos is not None and FEE_em_params_neg is not None:
             # Could support this elsewhere by returning both and then combining them after computing the FEE force
             warnings.warn("Combining the FEE parameters for the positive and negative swept volumes is not yet implemented. Not using either.")
@@ -2147,15 +2153,22 @@ class GETMovement:
         if pos_swept_mesh is not None and neg_swept_mesh is not None:
             intersected_inds = np.concatenate((intersected_inds_pos, intersected_inds_neg), axis=0)
             move_dir = [move_dir_pos, move_dir_neg]
+            if deposit_inds_pos is None:
+                deposit_inds_pos = np.zeros((0,2), dtype=np.int32)
+            if deposit_inds_neg is None:
+                deposit_inds_neg = np.zeros((0,2), dtype=np.int32)
+            deposit_inds = np.concatenate((deposit_inds_pos, deposit_inds_neg), axis=0)
         elif pos_swept_mesh is not None:
             intersected_inds = intersected_inds_pos
             move_dir = [move_dir_pos]
+            deposit_inds = deposit_inds_pos
         elif neg_swept_mesh is not None:
             intersected_inds = intersected_inds_neg
             move_dir = [move_dir_neg]
+            deposit_inds = deposit_inds_neg
         
         # Only return positive FEE parameters for now
-        return FEE_em_params, FEE_valid, surf_points_dict, intersected_inds, move_dir
+        return FEE_em_params, FEE_valid, surf_points_dict, intersected_inds, move_dir, deposit_inds
 
 
 if __name__ == "__main__":
