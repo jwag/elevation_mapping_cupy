@@ -569,7 +569,7 @@ class ElevationMap:
         with self.map_lock:
             center = self.get_position()
             # TODO: Make the varh derived from the pose uncertainty and use a sensor model
-            FEE_em_params, FEE_valid, surf_points_dict, intersected_inds, move_dir, deposit_inds = self.GETs[GET_ID].update_map_with_GET_movement(
+            FEE_em_params, FEE_valid, surf_points_dict, intersected_inds, move_dir, deposit_inds, GET_heights, GET_inds = self.GETs[GET_ID].update_map_with_GET_movement(
                 self.elevation_map,
                 center,
                 self.cell_n,
@@ -592,7 +592,7 @@ class ElevationMap:
             #     intersected_inds = np.array([map_ind[0] for map_ind in surf_points_dict['map_inds']])
             # Get the height of the GET blade in the map frame
             map_size = np.array([self.cell_n, self.cell_n], dtype=np.int32)
-            edge_inds, edge_heights = self.GETs[GET_ID].find_cutting_edge(T_MG1, center,  map_size, self.resolution)
+            edge_inds, edge_heights = self.GETs[GET_ID].find_cutting_edge(T_MG0, center,  map_size, self.resolution)
 
             # Just using T_MG1 for now to perform soil erosion. This shouldn't matter as long as our ROI is large enough
             # The factor of 5 here is a bit of a hack to get the soil to erode more quickly since we aren't accounting for v_0
@@ -607,7 +607,15 @@ class ElevationMap:
                     if move_dir is not None:
                         m_dir = move_dir[move_dir_index % len(move_dir)]
                         move_dir_index += 1
-                    self.perform_soil_erosion(GET_ID, T_MG1, intersected_inds, deposit_inds, edge_inds, edge_heights, dT, move_dir=m_dir)
+                        # If None use the other movement_dir. If they are both none then normal will be used
+                        if m_dir is None:
+                            m_dir = move_dir[move_dir_index % len(move_dir)]
+                            move_dir_index += 1
+                    self.perform_soil_erosion(GET_ID, T_MG1, intersected_inds, deposit_inds, edge_inds, edge_heights, GET_inds, GET_heights, dT, move_dir=m_dir)
+            
+            # if cp.any(self.elevation_map[0] > 3.0):
+            #     warnings.warn("Warning: Elevation map height is greater than 3.0 m. This may indicate problems with the soil erosion plugin.")
+
 
             # Warning this was checking if surf_points_dict was none to determine if this was a valid FEE measurement, but
             # this was resulting in erosion being applied to the map and not excluding the blade. So now we are checking if
@@ -661,8 +669,10 @@ class ElevationMap:
                             T_MG: cp._core.core.ndarray,
                             intersected_inds: cp._core.core.ndarray,
                             deposit_inds: cp._core.core.ndarray,
+                            edge_inds: cp._core.core.ndarray,
+                            edge_heights: cp._core.core.ndarray,
                             GET_inds: cp._core.core.ndarray,
-                            GET_ind_heights: cp._core.core.ndarray,
+                            GET_inds_heights: cp._core.core.ndarray,
                             dt: float,
                             move_dir: cp._core.core.ndarray = None,
     ):
@@ -686,16 +696,9 @@ class ElevationMap:
         GET_mask = cp.zeros((self.cell_n, self.cell_n), dtype=cp.bool_)
         # GET_heights should be in map origin frame
         GET_heights = cp.zeros((self.cell_n, self.cell_n), dtype=self.data_type)
-
-        # Also mark the intersected cells as occupied by the GET using the height of the terrain
-        if intersected_inds is not None:
-            GET_mask[intersected_inds[:,0], intersected_inds[:,1]] = True
-            # Get the heights of the terrain at the intersected cells
-            GET_heights[intersected_inds[:,0], intersected_inds[:,1]] = self.elevation_map[0][intersected_inds[:,0], intersected_inds[:,1]]
-
-        if GET_inds is not None:
-            GET_mask[GET_inds[:,0], GET_inds[:,1]] = True
-            GET_heights[GET_inds[:,0], GET_inds[:,1]] = GET_ind_heights[:,0]
+        if edge_inds is not None:
+            GET_mask[edge_inds[:,0], edge_inds[:,1]] = True
+            GET_heights[edge_inds[:,0], edge_inds[:,1]] = edge_heights[:,0] # TODO: make the indexing the same
         
         # We also want to allow erosion in cells where soil has been deposited but the blade is present
         # The intersected cells will ensure erosion in direction opposing the sweep at those locations
@@ -706,6 +709,10 @@ class ElevationMap:
             overlap = GET_mask[deposit_inds[:,0], deposit_inds[:,1]] == True
             # If the blade is present in the deposit cells, then we will allow erosion in those cells
             GET_mask[deposit_inds[overlap,0], deposit_inds[overlap,1]] = False
+        
+        if GET_inds is not None:
+            GET_mask[GET_inds[:,0], GET_inds[:,1]] = True
+            GET_heights[GET_inds[:,0], GET_inds[:,1]] = GET_inds_heights
 
         # Check to make sure that all deposit inds will have erosion applied to them
         if deposit_inds is not None:
@@ -713,9 +720,8 @@ class ElevationMap:
             # If so, then we will set them to True
             not_erode_deposits = GET_mask[deposit_inds[:,0], deposit_inds[:,1]] == True
             if np.any(not_erode_deposits):
-                # print("Warning: Some deposit inds are not in the GET mask. Setting them to True.")
+                warnings.warn("Warning: Some deposit inds are not in the GET mask.")
                 # GET_mask[deposit_inds[erode_deposits,0], deposit_inds[erode_deposits,1]] = True
-                debug = 1
                 # print("Deposit inds: ", deposit_inds[erode_deposits])
         
         if move_dir is not None:
