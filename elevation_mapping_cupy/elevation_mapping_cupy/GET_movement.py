@@ -389,10 +389,12 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         elif len(intersections1) == 0 and len(intersections2) == 0:
             pass
         else:
-            raise ValueError("The intersections are not valid. intersections1: {}, intersections2: {}".format(len(intersections1), len(intersections2)))
+            # TODO: Figure out why this happens sometimes. Maybe a rounding issue
+            warnings.warn("Only one intersection found between the two meshes. Not sure what could cause this intersections1: {}, intersections2: {}".format(len(intersections1), len(intersections2)))
+            # raise ValueError("The intersections are not valid. intersections1: {}, intersections2: {}".format(len(intersections1), len(intersections2)))
 
     valid_intersect = (mesh1_pierces_mesh2 or mesh2_pierces_mesh1)
-    if not valid_intersect and not separate_surfs:
+    if not valid_intersect or not separate_surfs:
         return (), valid_intersect
     elif mesh1_pierces_mesh2 and mesh2_pierces_mesh1:
         print ("Mesh1 and Mesh2 pierce each other")

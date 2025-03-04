@@ -595,14 +595,15 @@ class ElevationMap:
             edge_inds, edge_heights = self.GETs[GET_ID].find_cutting_edge(T_MG0, center,  map_size, self.resolution)
 
             # Just using T_MG1 for now to perform soil erosion. This shouldn't matter as long as our ROI is large enough
-            # The factor of 5 here is a bit of a hack to get the soil to erode more quickly since we aren't accounting for v_0
-            DT = dt * 5.0 # TODO: This should probably be passed in to the function
+            # Using a fixed value for the total elapsed time as using the true time elapsed led to undesired behavior where
+            # faster moving sweeps were eroded significantly less and slower sleeps had too much erosion applied.
+            DT = self.param.soil_erosion_dt_total
             m_dir = None
             move_dir_index = 0
             if self.param.use_soil_erosion:
                 # Perform erosion as many times as necessary to cover the dT time interval given the maximum erosion time step
                 while DT > 0:
-                    dT = min(DT, self.param.soil_erosion_maximum_dt)
+                    dT = min(DT, self.param.soil_erosion_maximum_dt_step)
                     DT -= dT
                     if move_dir is not None:
                         m_dir = move_dir[move_dir_index % len(move_dir)]

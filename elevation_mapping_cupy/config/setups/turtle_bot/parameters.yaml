@@ -79,12 +79,14 @@ elevation_mapping_node:
     em_FEE_max_projection_dist: 0.5 # Maximum distance to extrapolate FEE params generation from last valid em data
     use_soil_erosion: true # Use soil erosion or not
     erosion_ROI_dx: 6.0 # Length of region around blade to consider for erosion
-    erosion_ROI_dy: 1.0 # Width of region around blade to consider for erosion (will be blade_width+erosion_ROI_dy)
+    erosion_ROI_dy: 2.0 # Width of region around blade to consider for erosion (will be blade_width+erosion_ROI_dy)
     loose_soil_cohesion : 25.0 # TODO: Set to reasonable Value Units of Pa. Cohesion of loose soil
     loose_soil_phi : 0.26 # TODO: Set to reasonable value Units of radians. Internal friction angle of loose soil
     # loose_soil_gamma : compacted_soil_moist_unit_weight*swell_factor
     soil_erosion_alpha_min : 0.05 # Units of radians. Minimum angle of slope to consider for erosion
-    soil_erosion_maximum_dt: 0.1 # Maximum time step for erosion calculation in seconds. Making too large can cause poor behavior
+    soil_erosion_maximum_dt_step: 0.1 # Maximum time step for erosion calculation in seconds. Making too large can cause poor behavior
+    # soil_erosion_time_multiplier: 10.0  # Multiplier for the sweep time elapsed for soil erosion calculation.
+    soil_erosion_dt_total: 2.0  # Maximum total time to run erosion calculation for (after the time multiplier is applied).
 
     #### Soil Property Estimation ########
     use_soil_property_estimation: false             # Use soil property estimation or not., i.e. run the soil property estimation network and add the estimated soil properties to the map.

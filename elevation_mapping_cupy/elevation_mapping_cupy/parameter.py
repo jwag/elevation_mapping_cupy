@@ -152,8 +152,10 @@ class Parameter(Serializable):
                                     (Default: ``0.5``)
         use_soil_erosion: Enable soil erosion calculation or not.
                             (Default: ``True``)
-        soil_erosion_maximum_dt: Maximum time step for soil erosion calculation.
+        soil_erosion_maximum_dt_step: Maximum time step for soil erosion calculation.
                                 (Default: ``0.1``)
+        soil_erosion_dt_total: Total time to run erosion calculation for.
+                                (Default: ``1.0``)
         erosion_ROI_dx: Length of region around GET center to consider for soil erosion.  
                         (Default: ``1.5``)
         erosion_ROI_dy: Width of region around GET center to consider for soil erosion.  
@@ -280,7 +282,8 @@ class Parameter(Serializable):
     em_FEE_max_projection_dist: float = 0.5  # Maximum distance to extrapolate FEE parameters from last valid elevation mapping data.
     # Soil Erosion parameters
     use_soil_erosion: bool = True # Enable soil erosion calculation or not.
-    soil_erosion_maximum_dt: float = 0.1  # Maximum time step for soil erosion calculation.
+    soil_erosion_maximum_dt_step: float = 0.1  # Maximum time step for soil erosion calculation.
+    soil_erosion_dt_total: float = 1.0  # Total time to run erosion calculation for.
     erosion_ROI_dx: float = 1.5  # Length of region around GET center to consider for soil erosion.
     erosion_ROI_dy: float = 0.6 # Width of region around GET center to consider for soil erosion.
     # TODO: Tune these default values
