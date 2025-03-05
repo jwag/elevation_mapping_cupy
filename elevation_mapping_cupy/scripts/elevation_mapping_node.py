@@ -11,7 +11,7 @@ import ros2_numpy as rnp
 from sensor_msgs.msg import PointCloud2, Image, CameraInfo
 from nav_msgs.msg import Odometry
 from sensor_msgs_py import point_cloud2
-from tf_transformations import quaternion_matrix, quaternion_conjugate, quaternion_multiply
+from tf_transformations import quaternion_matrix, quaternion_conjugate, quaternion_multiply, quaternion_about_axis, euler_from_quaternion, quaternion_from_euler
 import tf2_ros
 import message_filters
 from cv_bridge import CvBridge
@@ -476,7 +476,13 @@ class ElevationMappingNode(Node):
                 # See: https://www.mathworks.com/help/driving/ref/quaternion.dist.html
                 q1 = self.orientation
                 q2 = GET_curr.orientation
-                angle_deg = 2 * np.arccos(np.abs(quaternion_multiply(q1, quaternion_conjugate(q2))[3])) * 180 / np.pi
+                q_rel = quaternion_multiply(quaternion_conjugate(q1), q2)
+                # TODO: Redo this with pure quaternion math. project vectors onto plane of blade and then take the dot product
+                #       see : https://math.stackexchange.com/a/357991
+                # Only use pitch and yaw. Ignore roll because that is rotation about the blade plane
+                roll, pitch, yaw = euler_from_quaternion(q_rel, axes='sxyz')
+                q_rel_new = quaternion_from_euler(0.0, pitch, yaw, axes='sxyz')
+                angle_deg = 2 * np.arccos(np.abs(q_rel_new[3])) * 180 / np.pi
                 if angle_deg > self.GET_config["max_rotation_deg"]:
                     self.em_node.get_logger().info(f"GET has rotated {angle_deg} degrees. Triggering update.")
                     update = True

@@ -171,36 +171,36 @@ Visualization Manager:
       Enabled: true
       Frame Timeout: 15
       Frames:
-        All Enabled: true
+        All Enabled: false
         base_footprint:
           Value: true
         base_link:
-          Value: true
+          Value: false
         base_scan:
-          Value: true
+          Value: false
         camera_depth_optical_frame:
-          Value: true
+          Value: false
         camera_rgb_frame:
-          Value: true
+          Value: false
         camera_rgb_optical_frame:
-          Value: true
+          Value: false
         caster_back_left_link:
-          Value: true
+          Value: false
         caster_back_right_link:
-          Value: true
+          Value: false
         imu_link:
-          Value: true
+          Value: false
         odom:
           Value: true
         realsense_depth_frame:
-          Value: true
+          Value: false
         realsense_link:
-          Value: true
+          Value: false
         wheel_left_link:
-          Value: true
+          Value: false
         wheel_right_link:
-          Value: true
-      Marker Scale: 1
+          Value: false
+      Marker Scale: 4
       Name: TF
       Show Arrows: true
       Show Axes: true
@@ -245,8 +245,8 @@ Visualization Manager:
       Value: false
       Visibility:
         Grid: true
-        GridMap: true
         GridMap-loose: true
+        GridMap-rgb: true
         GridMapFiltered: true
         Image: true
         PointCloud2: true
@@ -406,25 +406,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/ThirdPersonFollower
-      Distance: 3.38887095451355
+      Distance: 11.625526428222656
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -0.7572358250617981
-        Y: -0.10913658142089844
-        Z: -0.018636569380760193
+        X: -1.557861328125
+        Y: 0.9135117530822754
+        Z: -0.01863628812134266
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.6897954940795898
+      Pitch: 0.9247963428497314
       Target Frame: base_link
       Value: ThirdPersonFollower (rviz_default_plugins)
-      Yaw: 3.08858585357666
+      Yaw: 3.5585856437683105
     Saved: ~
 Window Geometry:
   Camera:

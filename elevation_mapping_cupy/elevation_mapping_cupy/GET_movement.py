@@ -624,7 +624,13 @@ def sweep_thin_poly_mesh(
                 offset = len(pos_verts)
                 # Add the verticies for the positive sweep
                 pos_verts = np.concatenate((pos_verts, p_verts[0:n_new_pos_points]), axis=0)
-                pos_start_centroid = p_verts[0:n_new_pos_points].mean(axis=0)
+                # This might mean that i need to rethink how the indexing works here
+                # I think it is possible for it to fail when the intersected meshes have different length boundries...
+                if n_new_pos_points != stride:
+                    warnings.warn("If this condition fails that means that I need to debug this start end centroid calculation.")
+                # The new points are the first n_new_pos_points of the p_verts I think
+                pos_start_centroid = p_verts[n_new_pos_points:].mean(axis=0)
+                pos_end_centroid = p_verts[0:n_new_pos_points].mean(axis=0)
                 # Add the start cap faces (always?)
                 cap_face = get_cap_face(p_boundary, flip_normals = True)
                 pos_faces = np.concatenate((pos_faces, cap_face+offset), axis=0)
@@ -633,7 +639,6 @@ def sweep_thin_poly_mesh(
                 # TODO: Could combine with above concat
                 pos_verts = np.concatenate((pos_verts, p_verts[n_new_pos_points:]), axis=0)
                 pos_faces = np.concatenate((pos_faces, pos_face_sweep+offset), axis=0)
-                pos_end_centroid = p_verts[n_new_pos_points:].mean(axis=0)
                 # Add cap faces at the end of the sweep to close the volume
                 cap_face = get_cap_face(p_boundary, flip_normals = False)
                 pos_faces = np.concatenate((pos_faces, cap_face+len(pos_verts)-n_new_pos_points), axis=0)
@@ -645,7 +650,11 @@ def sweep_thin_poly_mesh(
                 offset = len(neg_verts)
                 # Add the verticies for the negative sweep
                 neg_verts = np.concatenate((neg_verts, n_verts[0:n_new_neg_points]), axis=0)
-                neg_start_centroid = n_verts[0:n_new_neg_points].mean(axis=0)
+                if n_new_neg_points != stride:
+                    warnings.warn("If this condition fails that means that I need to debug this start end centroid calculation.")
+                # The new points are the first n_new_neg_points of the n_verts I think
+                neg_start_centroid = n_verts[n_new_neg_points:].mean(axis=0)
+                neg_end_centroid = n_verts[0:n_new_neg_points].mean(axis=0)
                 # Add the start cap faces (always?)
                 cap_face = get_cap_face(n_boundary, flip_normals = False)
                 neg_faces = np.concatenate((neg_faces, cap_face+offset), axis=0)
@@ -653,7 +662,6 @@ def sweep_thin_poly_mesh(
                 offset = len(neg_verts)-n_new_neg_points
                 neg_verts = np.concatenate((neg_verts, n_verts[n_new_neg_points:]), axis=0)
                 neg_faces = np.concatenate((neg_faces, neg_face_sweep+offset), axis=0)
-                neg_end_centroid = n_verts[n_new_neg_points:].mean(axis=0)
                 # Add cap faces at the end of the sweep to close the volume
                 cap_face = get_cap_face(n_boundary, flip_normals = True)
                 neg_faces = np.concatenate((neg_faces, cap_face+len(neg_verts)-n_new_neg_points), axis=0)
@@ -2115,6 +2123,10 @@ class GETMovement:
             roll, _, _ = get_ext_euler_angles(transforms[0,:3,:3], xp=np)
         roll_dirs = np.array([roll]) >= 0
         pos_swept_mesh, pos_translation, neg_swept_mesh, neg_translation = sweep_thin_poly_mesh(self.GET_mesh, transforms, roll_dirs=roll_dirs, convex_interp=True)
+        if pos_swept_mesh is not None:
+            print("Positive swept volume found")
+        if neg_swept_mesh is not None:
+            print("Negative swept volume found")
         # T_OG0 = T_OM @ T_MG0
         # Where a point in represented in O can be obtained from a point represented in M by translating by -map_center
         T_OG0 = T_MG0.copy()
@@ -2128,12 +2140,46 @@ class GETMovement:
         GET_plane_origin = T_OG0[:3, :3]@self.GET_geometry_origin + T_OG0[:3, 3]
         # Also get the translation between the two poses of the GET
         translation = T_MG1[:3, 3] - T_MG0[:3, 3]
+
+        # Check that the translation is in the direction of the normal when we don't have a self intersection
+        if (pos_swept_mesh is not None) != (neg_swept_mesh is not None):
+            if pos_swept_mesh is not None:
+                n = normal
+            elif neg_swept_mesh is not None:
+                n = -normal
+            dot_prod = np.dot(n[:2], translation[:2])
+            if dot_prod < 0:
+                warnings.warn(
+                "Translation is in the opposite direction of the normal. "
+                "t o n = {} o {} = {}".format(translation[:2], n[:2], dot_prod)
+            )
+
         # If the mesh had a self intersection then we want to use the translations of the split meshes at the centroids
-        # But if not then just use the translation of the original mesh
+        # But if not then just use the translation of the full GET centroid
         if pos_translation is None:
             pos_translation = translation
+        else:
+            # Rotate the translation to the map origin frame
+            pos_translation = T_MG0[:3, :3] @ pos_translation
+            p_dot_prod = np.dot(normal[:2], pos_translation[:2])
+            if p_dot_prod < 0:
+                warnings.warn(
+                "Positive translation is in the opposite direction of the normal. "
+                "t_p o n = {} o {} = {}".format(pos_translation[:2], normal[:2], p_dot_prod)
+            )
+
         if neg_translation is None:
             neg_translation = translation
+        else:
+            # Rotate the translation to the map origin frame
+            neg_translation = T_MG0[:3, :3] @ neg_translation
+            n_dot_prod = np.dot(-normal[:2], neg_translation[:2])
+            if n_dot_prod < 0:
+                warnings.warn(
+                "Negative translation is in the opposite direction of the normal. "
+                "t_n o n = {} o {} = {}".format(neg_translation[:2], -normal[:2], n_dot_prod)
+            )
+        
         # Move the swept volume poistion to the map origin frame
         O_r_OG = M_r_MG - map_center.T
 
