@@ -66,7 +66,7 @@ elevation_mapping_node:
 
     #### Ground Engaging Tool (GET) Parameters ########
     # TODO: Tune all of these parameters
-    move_dir_normal_weight: 0.5
+    move_dir_normal_weight: 1.0 # affects erosion... TODO: Remove as parameter if this is a problem
     # TODO: Consider moving some of these parameters to the parameters.yaml file as they should be the same for all blades
     swell_factor: 1.2 # TODO: Make parameter (use something reasonable). Set to 1 for no swell
     spill_factor: 0.0 # Proporation of loose material moved during a sweep that is spilled

@@ -1053,6 +1053,8 @@ class GETMovement:
             indices = np.ceil(inds).astype(np.int32)
         elif round_dir == "round":
             indices = np.round(inds).astype(np.int32)
+        elif round_dir == "float":
+            indices = inds
         else:
             raise ValueError("round_dir should be 'floor', 'ceil', or 'round'")
         indices = np.clip(indices, 0, cell_n - 1)
@@ -1143,20 +1145,20 @@ class GETMovement:
         # The cutting edge vector is in the map frame so we need to transform it to the map origin frame
         # Since it is a direction vector we only need to transform the direction
         move_dir = T_MG[:3,:3] @ self.cutting_edge_vector
-        # Normalize the direction vector
-        move_dir = move_dir / np.linalg.norm(move_dir)
+        # Normalize the direction vector, but based on the xy components only
+        move_dir = move_dir / np.linalg.norm(move_dir[0:2])
 
         dx = move_dir[0]
         dy = move_dir[1]
 
         # Get the cutting edge origin in the map origin frame
-        edge_origin_inds, start_pos = self.get_map_index(start_pos, center, map_size[0], self.param.resolution)
+        edge_origin_inds, start_pos = self.get_map_index(start_pos, center, map_size[0], self.param.resolution, round_dir="float")
         # Get the cutting edge end in the map origin frame
-        edge_end_inds, end_pos = self.get_map_index(end_pos, center, map_size[0], self.param.resolution)
+        edge_end_inds, end_pos = self.get_map_index(end_pos, center, map_size[0], self.param.resolution, round_dir="float")
 
         # Obtain the slope of the cutting edge in the map frame with respect to the map xy plane
         edge_slope = move_dir[2] / np.linalg.norm(move_dir[0:2])
-        edge_length = np.linalg.norm(self.cutting_edge_vector)
+        edge_length_xy = np.linalg.norm(self.cutting_edge_vector[0:2])
         # This is a digitial differential analyzer (DDA) line algorithm
         # see https://en.wikipedia.org/wiki/Digital_differential_analyzer_(graphics_algorithm)
         if (abs(dx) >= abs(dy)):
@@ -1187,14 +1189,14 @@ class GETMovement:
             edge_height = edge_slope * edge_dist_xy + start_pos[0,2]
             edge_heights = np.append(edge_heights, np.array([[edge_height]]), axis=0)
             # Check if the point is the end point
-            if (xind == edge_end_inds[0,0] and yind == edge_end_inds[0,1]):
+            if (xind == round_fn(edge_end_inds[0,0]) and yind == round_fn(edge_end_inds[0,1])):
                 break
             x = x + dx
             y = y + dy
             # Check if the length of the cutting edge is exceeded, i.e. we have reached
             # the end of the cutting edge. This is needed in addition to the edge_end_inds check
             # for some reason that i don't quite understand.
-            if (edge_dist_xy > edge_length):
+            if (edge_dist_xy > edge_length_xy):
                 break
             if (x < 0 or x >= map_size[0] or y < 0 or y >= map_size[1]):
                 raise ValueError("Blade cutting edge outside of map bounds")

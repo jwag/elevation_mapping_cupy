@@ -558,6 +558,11 @@ def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_m
                                 // Limit the slip height so that soil may flow up to the bottom of the GET
                                 h_slip_max = fminf(h_slip_max, fmaxf(GET_heights[idx_] - H_, 0.0));
                             }
+                            if (mask) // idx cell has GET and soil is flowing from it
+                            {
+                                // Don't allow soil to flow out of cells occupied by the GET
+                                return;
+                            }
                         }
                         // Soil is flowing from idx_ to idx
                         else {
@@ -570,6 +575,11 @@ def soil_erosion_kernel(width, height, resolution, cohesion, phi, gamma, alpha_m
                             {
                                 // Limit the slip height so that soil may flow up to the bottom of the GET
                                 h_slip_max = fminf(h_slip_max, fmaxf(GET_heights[idx] - H, 0.0));
+                            }
+                            if (mask_) // idx_ cell has GET and soil is flowing from it
+                            {
+                                // Don't allow soil to flow out of cells occupied by the GET
+                                return;
                             }
                         }
                         // TODO: Re think this given the nonlinear nature of the safety factor

@@ -592,7 +592,12 @@ class ElevationMap:
             #     intersected_inds = np.array([map_ind[0] for map_ind in surf_points_dict['map_inds']])
             # Get the height of the GET blade in the map frame
             map_size = np.array([self.cell_n, self.cell_n], dtype=np.int32)
-            edge_inds, edge_heights = self.GETs[GET_ID].find_cutting_edge(T_MG0, center,  map_size, self.resolution)
+            # edge_inds_start, edge_heights_start = self.GETs[GET_ID].find_cutting_edge(T_MG0, center,  map_size, self.resolution)
+            edge_inds_end, edge_heights_end = self.GETs[GET_ID].find_cutting_edge(T_MG1, center,  map_size, self.resolution)
+            # edge_inds = np.concatenate((edge_inds_start, edge_inds_end), axis=0)
+            # edge_heights = np.concatenate((edge_heights_start, edge_heights_end), axis=0)
+            edge_inds = edge_inds_end
+            edge_heights = edge_heights_end
 
             # Just using T_MG1 for now to perform soil erosion. This shouldn't matter as long as our ROI is large enough
             # Using a fixed value for the total elapsed time as using the true time elapsed led to undesired behavior where
