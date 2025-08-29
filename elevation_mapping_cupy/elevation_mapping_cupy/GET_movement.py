@@ -1142,7 +1142,8 @@ class GETMovement:
                 x = x + dx
                 y = y + dy
                 if (x < 0 or x >= map_size[0] or y < 0 or y >= map_size[1]):
-                    raise ValueError("Deposit location not found")
+                    warnings.warn("Deposit location not found! Debug this. Setting to intersected cell index. This should not happen if the map is large enough to capture the entire cutting edge.")
+                    deposit_location[i] = intersected_cell_ind
                     break
         return deposit_location
     
