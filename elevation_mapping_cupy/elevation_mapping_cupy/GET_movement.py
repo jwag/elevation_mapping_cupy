@@ -16,7 +16,17 @@ from shapely.geometry import Polygon, MultiPolygon, Point
 from shapely.ops import unary_union
 from shapely.affinity import translate as shapely_translate
 
-warnings.simplefilter('always', UserWarning)
+warnings.simplefilter("always", UserWarning)  # Ensure warnings are always shown
+class DebugWarnings:
+    def __init__(self, debug=False):
+        self.debug = debug
+
+    def warn(self, message):
+        if self.debug:
+            warnings.warn(message, stacklevel=2)
+
+# Disable debug warnings for now
+debug_warnings = DebugWarnings(debug=False)  # Set debug=True to enable debug warnings
 
 
 def get_poly_mesh_boundary(poly_mesh):
@@ -399,7 +409,7 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
     if not valid_intersect or not separate_surfs:
         return (), valid_intersect
     elif mesh1_pierces_mesh2 and mesh2_pierces_mesh1:
-        print ("Mesh1 and Mesh2 pierce each other")
+        debug_warnings.warn("Mesh1 and Mesh2 pierce each other")
         # Form intersections and and intersected_edges
         # Choose to treat as mesh1 piercing mesh2
         # Arbitrary choice to use edges of mesh1 intersecting wiht mesh2. Will change the surface 
@@ -445,7 +455,7 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         test=1
 
     elif mesh1_pierces_mesh2:
-        print("Mesh1 pierces Mesh2")
+        debug_warnings.warn("Mesh1 pierces Mesh2")
         intersected_edges = boundary[intersected_lines]
         pos_verts, pos_boundary, neg_verts, neg_boundary = split_intersected_meshes(face, intersections, intersected_edges,
                                                                                     piercing_verts=verts1, pierced_verts=verts2,
@@ -454,7 +464,7 @@ def find_intersections(T12, poly_mesh1=None, poly_mesh2=None, boundary=None, fac
         test = 1
     elif mesh2_pierces_mesh1:
         # Split mesh2 into two parts
-        print("Mesh2 pierces Mesh1")
+        debug_warnings.warn("Mesh2 pierces Mesh1")
         # First let us add the intersection points as vertices to the mesh
         # Add the intersection points to the mesh
         # The suffix indicates wheter or not the mesh is on the pierced side or the piercing side
@@ -628,8 +638,11 @@ def sweep_thin_poly_mesh(
                 pos_verts = np.concatenate((pos_verts, p_verts[0:n_new_pos_points]), axis=0)
                 # This might mean that i need to rethink how the indexing works here
                 # I think it is possible for it to fail when the intersected meshes have different length boundries...
+                # Not sure what is going on here, but I don't think it is causing problems so commenting out the warning for now
+                # It may be that this occurs when one mesh peirces the other exclusively meaning one side of the sweep has 3 points and the
+                # other side isn't closed (I can't remember how I handle this though)
                 if n_new_pos_points != stride:
-                    warnings.warn("If this condition fails that means that I need to debug this start end centroid calculation.")
+                    debug_warnings.warn("If this condition fails that means that I need to debug this start end centroid calculation.")
                 # The new points are the first n_new_pos_points of the p_verts I think
                 pos_start_centroid = p_verts[n_new_pos_points:].mean(axis=0)
                 pos_end_centroid = p_verts[0:n_new_pos_points].mean(axis=0)
@@ -652,8 +665,11 @@ def sweep_thin_poly_mesh(
                 offset = len(neg_verts)
                 # Add the verticies for the negative sweep
                 neg_verts = np.concatenate((neg_verts, n_verts[0:n_new_neg_points]), axis=0)
+                # Not sure what is going on here, but I don't think it is causing problems so commenting out the warning for now
+                # It may be that this occurs when one mesh peirces the other exclusively meaning one side of the sweep has 3 points and the
+                # other side isn't closed (I can't remember how I handle this though)
                 if n_new_neg_points != stride:
-                    warnings.warn("If this condition fails that means that I need to debug this start end centroid calculation.")
+                    debug_warnings.warn("If this condition fails that means that I need to debug this start end centroid calculation.")
                 # The new points are the first n_new_neg_points of the n_verts I think
                 neg_start_centroid = n_verts[n_new_neg_points:].mean(axis=0)
                 neg_end_centroid = n_verts[0:n_new_neg_points].mean(axis=0)
@@ -1609,7 +1625,11 @@ class GETMovement:
         # Handle possible negative d_hats by excluding them from the average
         d_valid = d_hat >= 0
         if np.any(~d_valid):
-            warnings.warn("Negative depth of cut found in FEE calculation. Excluding from average. Consider reducing sweep distance.")
+            # Can also be observed when moving down a slope with a shallow cut.
+            # Or may be caused by line fit for cells that were at the latter part of the sweep and therefore the line fit is less valid for the blade
+            # position at the start of the sweep. i.e. the blde translated a bit before intersecting this cell.
+            # Commenting out for now to clean up warnings during automated data collection
+            debug_warnings.warn("Negative depth of cut found in FEE calculation. Excluding from average. Consider reducing sweep distance.")
             if np.all(~d_valid):
                 warnings.warn("All depth of cuts are negative. Returning None.")
                 return None, surf_points_dict
@@ -2062,7 +2082,7 @@ class GETMovement:
             dist_to_ground_compact = min_sv_z - max_compact_em_z
             self.ground_proj_params = self.set_blade_ground_dist_calc_params(dist_to_ground_compact.get(), GET_plane_origin, translation)
             if dist_to_ground > 0:
-                print("No intersection with swept volume")
+                debug_warnings.warn("No intersection with swept volume")
                 # TODO: We could also update the variance of the cells that are not intersected,
                 #       e.g. if the variance is high then we can reduce it if our swept volume is close to the ground
                 update_elevation = False
@@ -2361,9 +2381,10 @@ class GETMovement:
             roll_dirs = np.array([roll]) >= 0
             pos_swept_mesh, pos_translation, neg_swept_mesh, neg_translation = sweep_thin_poly_mesh(self.GET_mesh, transforms, roll_dirs=roll_dirs, convex_interp=True)
             if pos_swept_mesh is not None:
-                print("Positive swept volume found")
+                pass # disabling print for now
+                debug_warnings.warn("Positive swept volume found")
             if neg_swept_mesh is not None:
-                print("Negative swept volume found")
+                debug_warnings.warn("Negative swept volume found")
         
         # T_OG0 = T_OM @ T_MG0
         # Where a point in represented in O can be obtained from a point represented in M by translating by -map_center
@@ -2404,6 +2425,8 @@ class GETMovement:
                                                    ROI_width=self.param.plane_fit_ROI_width,
                                                    height_layer_name='elevation_reference')
         
+        compute_neg_FEE = False # Could make a parameter for this, but just disabling for data collection for now
+        
         if not self.param.skip_GET_sweep:
             # Check that the translation is in the direction of the normal when we don't have a self intersection
             if (pos_swept_mesh is not None) != (neg_swept_mesh is not None):
@@ -2413,9 +2436,9 @@ class GETMovement:
                     n = -normal_G0
                 dot_prod = np.dot(n[:2], translation[:2])
                 if dot_prod < 0:
-                    warnings.warn(
+                    debug_warnings.warn(
                     "Translation is in the opposite direction of the normal. "
-                    "t o n = {} o {} = {}".format(translation[:2], n[:2], dot_prod)
+                    "t o n = {} o {} = {}. Can occur with large vertical movements.".format(translation[:2], n[:2], dot_prod)
                 )
 
             # If the mesh had a self intersection then we want to use the translations of the split meshes at the centroids
@@ -2427,9 +2450,9 @@ class GETMovement:
                 pos_translation = T_MG0[:3, :3] @ pos_translation
                 p_dot_prod = np.dot(normal_G0[:2], pos_translation[:2])
                 if p_dot_prod < 0:
-                    warnings.warn(
+                    debug_warnings.warn(
                     "Positive translation is in the opposite direction of the normal. "
-                    "t_p o n = {} o {} = {}".format(pos_translation[:2], normal_G0[:2], p_dot_prod)
+                    "t_p o n = {} o {} = {}. Can occur with large positive vertical movements.".format(pos_translation[:2], normal_G0[:2], p_dot_prod)
                 )
 
             if neg_translation is None:
@@ -2439,9 +2462,9 @@ class GETMovement:
                 neg_translation = T_MG0[:3, :3] @ neg_translation
                 n_dot_prod = np.dot(-normal_G0[:2], neg_translation[:2])
                 if n_dot_prod < 0:
-                    warnings.warn(
+                    debug_warnings.warn(
                     "Negative translation is in the opposite direction of the normal. "
-                    "t_n o n = {} o {} = {}".format(neg_translation[:2], -normal_G0[:2], n_dot_prod)
+                    "t_n o n = {} o {} = {}. Can occur with large negative vertical movements.".format(neg_translation[:2], -normal_G0[:2], n_dot_prod)
                 )
             
             # Move the swept volume poistion to the map origin frame
@@ -2463,7 +2486,7 @@ class GETMovement:
         FEE_em_params_neg = None
         if not self.param.skip_GET_sweep:
             if pos_swept_mesh is not None and neg_swept_mesh is not None and FEE==True:
-                warnings.warn("Self collision detected. No FEE parameters obtained. Updating map.")
+                debug_warnings.warn("Self collision detected. No FEE parameters obtained. Updating map.")
                 FEE = False
             if pos_swept_mesh is not None:
                 # Move the swept volume to the map origin frame
@@ -2474,10 +2497,10 @@ class GETMovement:
                 normal_G0 = -normal_G0
                 # Move the swept volume to the map origin frame
                 neg_swept_mesh.apply_transform(T_OG0)
-                elevation_updated_neg, FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_neg, intersected_inds_neg, move_dir_neg, deposit_inds_neg, GET_heights_neg, GET_inds_neg = self.update_map_with_swept_volume(neg_swept_mesh, normal_G0, neg_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin_0)
+                elevation_updated_neg, FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_neg, intersected_inds_neg, move_dir_neg, deposit_inds_neg, GET_heights_neg, GET_inds_neg = self.update_map_with_swept_volume(neg_swept_mesh, normal_G0, neg_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE and compute_neg_FEE, GET_plane_origin=GET_plane_origin_0)
             if FEE_em_params_pos is not None and FEE_em_params_neg is not None:
                 # Could support this elsewhere by returning both and then combining them after computing the FEE force
-                warnings.warn("Combining the FEE parameters for the positive and negative swept volumes is not yet implemented. Not using either.")
+                debug_warnings.warn("Combining the FEE parameters for the positive and negative swept volumes is not yet implemented. Not using either.")
                 FEE_em_params = None
                 FEE_valid = False
                 surf_points_dict = None
@@ -2487,7 +2510,8 @@ class GETMovement:
                 surf_points_dict = surf_points_dict_pos
             elif FEE_em_params_neg is not None:
                 # Need to support this by including the translation direction of the portion of the swept volume
-                warnings.warn("Negative swept volume FEE parameters are only partially tested")
+                if compute_neg_FEE: # Only warn if we are actually computing the FEE for the negative swept volume
+                    debug_warnings.warn("Negative swept volume FEE parameters are only partially tested.")
                 FEE_em_params = FEE_em_params_neg
                 FEE_valid = FEE_valid_pos
                 surf_points_dict = surf_points_dict_neg
