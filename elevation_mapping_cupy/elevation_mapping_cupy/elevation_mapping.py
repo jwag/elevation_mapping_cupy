@@ -9,6 +9,7 @@ import numpy as np
 import threading
 import subprocess
 import warnings
+import copy
 
 # TODO: Move into GET movement
 from shapely.geometry import Polygon
@@ -563,7 +564,6 @@ class ElevationMap:
                            n_steps: np.int32,
                            var_h: float,
                            roll: float = None,
-                           soil_nn_input: dict = None
     ):
         """Input the GET movement and update the elevation map.
 
@@ -576,7 +576,7 @@ class ElevationMap:
             var_h (float):                              Variance of the height measurement
             roll (float):                               Roll angle of the GET frame w.r.t. the map frame. If None will compute roll 
                                                         from tranform, but could slow down processing.
-            soil_nn_input (dict):                       Dictionary containing the input data for the soil property estimation model
+
         Returns:
             FEE_em_params:                              FEE parameters obtained from map as dictionary containing:
                                                         d, alpha, rho, w, Q (None if no valid GET movement is detected)
@@ -659,52 +659,70 @@ class ElevationMap:
                                                    )
                                                    
 
-            # Warning this was checking if surf_points_dict was none to determine if this was a valid FEE measurement, but
-            # this was resulting in erosion being applied to the map and not excluding the blade. So now we are checking if
-            # FEE_em_params is None. However, this may cause problems when we go back to mapping soil properties.
-            # TODO: Check to see if this change caused problems.
-            if self.param.use_soil_property_estimation and FEE_valid:
-                # Now predict the soil properties
-                sample_len = self.dz.hparams['sample_len']
-                assert len(soil_nn_input['position']) == len(soil_nn_input['velocity']) == len(soil_nn_input['action'] == sample_len), "Lengths of position, velocity, and action must be the same"
-                # Add the FEE parameters
-                em_metadata = copy.deepcopy(FEE_em_params) # TODO: Do we need to copy here?
-                # Override Q for no particles. TODO: Remove later
-                NO_PARTICLES = False
-                if NO_PARTICLES:
-                    em_metadata['Q'] *= 0.0
-                # Offset the step to match the sample length (the params should correspond to the end of the sample)
-                # These two should beare equivalent
-                # sweep_start_step = sample_len - em_metadata['d_step'][-1] - 1
-                sweep_start_step = sample_len - len(em_metadata['d_step'])
-                em_metadata['step'] = sweep_start_step + em_metadata['d_step'] # Needs to be a list because of the way model process batches
-                soil_nn_input['em_metadata'] = [em_metadata]
-                # Pass empty PGT metadata
-                soil_nn_input['metadata'] = {}
-                dataset = self.dz.deploy_dataset([soil_nn_input])
-                dataloader = self.dz.deploy_dataloader(dataset)
-                FEE_params, FEE_params_var = self.dz.deploy_step(next(iter(dataloader)))
-                # print(metadata)
-                # Add d_prime_prime to metadata
-                FEE_params['d_prime_prime'] = FEE_em_params['d_prime_prime']
-
-                # Now add the estimated soil properties to the semantic map
-                channels = ['c', 'phi', 'gamma', 'delta', 'c_a', 'd', 'MeanCuttingForceMag'] # TODO: Should this be d_prime?
-                soil_wedge_inds = self.semantic_map.update_layers_GET(FEE_params, FEE_params_var, channels, surf_points_dict)
-
-                # Trigger FEE Plugin processing
-                if False: # Disable for now as this is time consuming
-                    self.plugin_manager.update_with_name("FEE_index",
-                                                        self.elevation_map,
-                                                        self.layer_names,
-                                                        semantic_map=self.semantic_map.semantic_map,
-                                                        semantic_params=self.semantic_map.layer_names,
-                                                        semantic_new_map=self.semantic_map.new_map,
-                                                        semantic_var_params=self.semantic_map.var_layer_names,
-                                                        updated_inds=soil_wedge_inds,
-                                                        )
         # TODO: Possibly get rid of surf_points_dict and just return FEE_em_params once we get working with semantic map
+        # return FEE_em_params, FEE_valid, surf_points_dict, plane_fit_params # TODO: Review valid
         return FEE_em_params, surf_points_dict, plane_fit_params
+    
+    def perform_soil_prop_estimation(self, 
+                                     FEE_em_params: dict,
+                                     surf_points_dict: dict,
+                                     soil_nn_input: dict,
+                                     ):
+        """Perform soil property estimation from the observation history in soil_nn_input combined with the known
+        FEE parameters and the surface points coming from the input_GET_movement function.
+        Args:
+            FEE_em_params (dict):                   FEE parameters obtained from map as dictionary containing:
+                                                    d, alpha, rho, w, Q (None if no valid GET movement is detected)
+            surf_points_dict (dict):                Dictionary containing the surface points for each slice/intersected cell
+                                                    with keys points and inds where points includes x_t and z, the distance to
+                                                    the blade along the translation direction and the height of the cell, and
+                                                    inds includes the indicies of the cells used for each line/surface fit for each slice.
+            soil_nn_input (dict):                  Dictionary containing the input to the soil property estimation neural network 
+        """
+        # Warning this was checking if surf_points_dict was none to determine if this was a valid FEE measurement, but
+        # this was resulting in erosion being applied to the map and not excluding the blade. So now we are checking if
+        # FEE_em_params is None. However, this may cause problems when we go back to mapping soil properties.
+        # TODO: Check to see if this change caused problems.
+        if self.param.use_soil_property_estimation:
+            # Now predict the soil properties
+            sample_len = self.dz.hparams['sample_len']
+            # assert len(soil_nn_input['position']) == len(soil_nn_input['velocity']) == len(soil_nn_input['action'] == sample_len), "Lengths of position, velocity, and action must be the same"
+            # Add the FEE parameters
+            em_metadata = copy.deepcopy(FEE_em_params) # TODO: Do we need to copy here?
+            # Override Q for no particles. TODO: Remove later
+            NO_PARTICLES = False
+            if NO_PARTICLES:
+                em_metadata['Q'] *= 0.0
+            # Make the end of the sweep be at step == sample_len - 1
+            sweep_start_step = em_metadata['step'][-1] - sample_len + 1
+            em_metadata['step'] -= sweep_start_step
+            # Needs to be a list because of the way model process batches
+            soil_nn_input['em_metadata'] = [em_metadata]
+            # Pass empty PGT metadata
+            soil_nn_input['metadata'] = {}
+            dataset = self.dz.deploy_dataset([soil_nn_input])
+            dataloader = self.dz.deploy_dataloader(dataset)
+            FEE_params, FEE_params_var = self.dz.deploy_step(next(iter(dataloader)))
+            # print(metadata)
+            # Add d_prime_prime to metadata
+            FEE_params['d_prime_prime'] = FEE_em_params['d_prime_prime']
+
+            # Now add the estimated soil properties to the semantic map
+            channels = ['c', 'phi', 'gamma', 'delta', 'c_a', 'd', 'MeanCuttingForceMag'] # TODO: Should this be d_prime?
+            soil_wedge_inds = self.semantic_map.update_layers_GET(FEE_params, FEE_params_var, channels, surf_points_dict)
+
+            # Trigger FEE Plugin processing
+            if False: # Disable for now as this is time consuming
+                self.plugin_manager.update_with_name("FEE_index",
+                                                    self.elevation_map,
+                                                    self.layer_names,
+                                                    semantic_map=self.semantic_map.semantic_map,
+                                                    semantic_params=self.semantic_map.layer_names,
+                                                    semantic_new_map=self.semantic_map.new_map,
+                                                    semantic_var_params=self.semantic_map.var_layer_names,
+                                                    updated_inds=soil_wedge_inds,
+                                                    )
+        return
     
     def perform_soil_erosion(self,
                             GET_ID: str,
