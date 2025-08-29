@@ -448,7 +448,7 @@ class ElevationMap:
                     or orientation_noise > self.param.orientation_noise_thresh
                 )
             ):
-                print("Drift compensation triggered")
+                # print("Drift compensation triggered")
                 self.mean_error = error / error_cnt
                 self.additive_mean_error += self.mean_error
                 if np.abs(self.mean_error) < self.param.max_drift:
@@ -765,17 +765,25 @@ class ElevationMap:
         if deposit_inds is not None:
             # Convert to cupy
             deposit_inds = cp.asarray(deposit_inds, dtype=cp.int32)
-            # Determine if the blade is present in the deposit cells
-            overlap = GET_mask[deposit_inds[:,0], deposit_inds[:,1]] == True
-            # If the blade is present in the deposit cells, then we will allow erosion in those cells
-            GET_mask[deposit_inds[overlap,0], deposit_inds[overlap,1]] = False
+            # Bounds check: filter out indices that are out of range
+            if deposit_inds.shape[0] > 0:
+                valid_x = (deposit_inds[:, 0] >= 0) & (deposit_inds[:, 0] < self.cell_n)
+                valid_y = (deposit_inds[:, 1] >= 0) & (deposit_inds[:, 1] < self.cell_n)
+                valid = valid_x & valid_y
+                deposit_inds = deposit_inds[valid]
+                if deposit_inds.shape[0] > 0:
+                    # Determine if the blade is present in the deposit cells
+                    overlap = GET_mask[deposit_inds[:,0], deposit_inds[:,1]]
+                    # If the blade is present in the deposit cells, then we will allow erosion in those cells
+                    if cp.any(overlap):
+                        GET_mask[deposit_inds[overlap,0], deposit_inds[overlap,1]] = False
         
-        if GET_inds is not None:
+        if GET_inds is not None and GET_inds.shape[0] > 0:
             GET_mask[GET_inds[:,0], GET_inds[:,1]] = True
             GET_heights[GET_inds[:,0], GET_inds[:,1]] = GET_inds_heights
 
         # Check to make sure that all deposit inds will have erosion applied to them
-        if deposit_inds is not None:
+        if deposit_inds is not None and deposit_inds.shape[0] > 0:
             # Check if any of the deposit inds are not in the GET mask
             # If so, then we will set them to True
             not_erode_deposits = GET_mask[deposit_inds[:,0], deposit_inds[:,1]] == True
@@ -833,8 +841,21 @@ class ElevationMap:
                 valid_inds = shapely.contains_xy(ROI_poly, ROI_bbox_inds)
                 if np.all(~valid_inds):
                     continue
-                # Finally convert to cupy after interacting with shapely
-                ROI_bbox_inds = cp.asarray(ROI_bbox_inds[valid_inds], dtype=cp.int32)
+                # Filter to only valid ROI indices (inside polygon)
+                ROI_bbox_inds = ROI_bbox_inds[valid_inds]
+                # Additional bounds check: filter indices to be within [0, self.cell_n)
+                in_bounds_x = (ROI_bbox_inds[:, 0] >= 0) & (ROI_bbox_inds[:, 0] < self.cell_n)
+                in_bounds_y = (ROI_bbox_inds[:, 1] >= 0) & (ROI_bbox_inds[:, 1] < self.cell_n)
+                in_bounds = in_bounds_x & in_bounds_y
+                if not np.all(in_bounds):
+                    # Optionally print or warn about out-of-bounds indices
+                    # print(f"Warning: Filtering {np.sum(~in_bounds)} out-of-bounds ROI_bbox_inds.")
+                    pass
+                ROI_bbox_inds = ROI_bbox_inds[in_bounds]
+                if ROI_bbox_inds.shape[0] == 0:
+                    continue
+                # Finally convert to cupy after all filtering
+                ROI_bbox_inds = cp.asarray(ROI_bbox_inds, dtype=cp.int32)
                 # Perform erosion on the cells within the diagonal
                 self.soil_erosion_kernel(ROI_bbox_inds, erode_dir, dt, GET_mask, GET_heights, self.elevation_map, size=(ROI_bbox_inds.shape[0]))
         
