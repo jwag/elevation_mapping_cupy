@@ -43,7 +43,7 @@ ros2 launch ctl_blade_controller joy-launch.py use_sim_time:=true
 
 On the Windows Machine launch the Vortex :
 ```bash
-ros2 run ros2_vortex_SIL CTL_SIL_node
+ros2 run ros2_vortex_SIL CTL_SIL_node use_sim:=true
 ``` 
 
 Launch the elevation mapping node with the configs for the CTL:
