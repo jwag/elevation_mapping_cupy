@@ -436,9 +436,9 @@ class ElevationMap:
             # triggering drift compensation
             position_noise = cp.sqrt(Sigma_b_r_MB[0, 0] + Sigma_b_r_MB[1, 1] + Sigma_b_r_MB[2, 2])
             orientation_noise = cp.sqrt(Sigma_Theta_MB[0, 0] + Sigma_Theta_MB[1, 1] + Sigma_Theta_MB[2, 2])
-            print("Position noise: ", position_noise)
-            print("Error: ", error)
-            print("Error count: ", error_cnt)
+            # print("Position noise: ", position_noise) # Comment out
+            # print("Error: ", error)
+            # print("Error count: ", error_cnt)
             if (
                 self.param.enable_drift_compensation
                 and error_cnt > self.param.min_height_drift_cnt
