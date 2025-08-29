@@ -1,6 +1,7 @@
 elevation_mapping_node:
   ros__parameters:
     ############## Parameters of base ElevationMap class as specified in Parameters.py ##############
+    # TODO: Cleanup ordering of these parmeters and group them
     average_weight: 0.5                             # The weight for the average fusion.  
     checker_layer: 'elevation'                      # layer name for checking the validity of the cell.
     resolution: 0.1                                 # resolution in m.  
@@ -36,18 +37,18 @@ elevation_mapping_node:
     overlap_clear_range_xy: 4.0                     # xy range [m] for clearing overlapped area. this defines the valid area for overlap clearance. (used for multi floor setting)
     overlap_clear_range_z: 2.0                      # z range [m] for clearing overlapped area. cells outside this range will be cleared. (used for multi floor setting)
 
-    #### Feature toggles ########
+    #### Feature toggles ####
     enable_edge_sharpen: true
     enable_visibility_cleanup: true
     enable_visibility_height_update: true           # If true, elevation and loose soil heights are updated given the upper bound from the ray trace. Useful for soil mapping
     enable_drift_compensation: true
     enable_overlap_clearance: false
 
-    #### Traversability filter ########
+    #### Traversability filter ####
     use_chainer: false                              # Use chainer as a backend of traversability filter or pytorch. If false, it uses pytorch. pytorch requires ~2GB more GPU memory compared to chainer but runs faster.
     weight_file: '$(find-pkg-share elevation_mapping_cupy)/config/core/weights.dat'               # Weight file for traversability filter
 
-    #### Ground Engaging Tool (GET) Parameters ########
+    #### Ground Engaging Tool (GET) Parameters ####
     # TODO: Tune all of these parameters
     move_dir_normal_weight: 0.5
     # TODO: Consider moving some of these parameters to the parameters.yaml file as they should be the same for all blades
@@ -86,33 +87,32 @@ elevation_mapping_node:
 
     ############## Management Parameters: For managing the behavior of the node ##############
     # TODO: Go through and fix python code to use all of these parameters
-    voxel_filter_size: 0.1                          # NOT PARAM
-    position_lowpass_alpha: 0.2                     # lowpass filter alpha used for detecting movements. # NOT PARAM
-    orientation_lowpass_alpha: 0.2                  # lowpass filter alpha used for detecting movements. # NOT PARAM
-
-    update_variance_fps: 5.0                        # fps for updating variance. # NOT PARAM
-    update_pose_fps: 10.0                           # fps for updating pose and shift the center of map. # NOT PARAM
-    time_interval: 0.1                              # Time layer is updated with this interval. # NOT PARAM
-    map_acquire_fps: 5.0                            # Raw map is fetched from GPU memory in this fps. # NOT PARAM
-    publish_statistics_fps: 1.0                     # Publish statistics topic in this fps. # NOT PARAM
-    recordable_fps: 3.0                             # Recordable fps for pointcloud. # NOT PARAM and NOT USED
-    enable_normal_arrow_publishing: false           # NOT PARAM
-
-    pose_topic: '/dlio/odom_node/odom'
-    map_frame: 'odom'                               # The map frame where the odometry source uses. # NOT PARAM
-    base_frame: 'base_footprint'                    # The robot's base frame. This frame will be a center of the map. # NOT PARAM
-    corrected_map_frame: 'odom'                     # NOT PARAM
-
-    enable_pointcloud_publishing: false             # NOT PARAM
-    enable_drift_corrected_TF_publishing: false     # NOT PARAM
-    enable_normal_color: false                      # If true, the map contains 'color' layer corresponding to normal. Add 'color' layer to the publishers setting if you want to visualize. # NOT PARAM
+    #### Map Management Parameters (Will affect the generation of the map itself) ####
+    map_frame: 'odom'                               # The map frame where the odometry source uses. 
+    base_frame: 'base_footprint'                    # The robot's base frame. This frame will be a center of the map. 
+    corrected_map_frame: 'odom'                     
+    update_variance_fps: 5.0                        # fps for updating variance. 
+    update_pose_fps: 10.0                           # fps for updating pose and shift the center of map. Set to 0 to disable.
+    time_interval: 0.1                              # Time layer is updated with this interval.
+    position_lowpass_alpha: 0.2                     # lowpass filter alpha used for detecting movements. 
+    orientation_lowpass_alpha: 0.2                  # lowpass filter alpha used for detecting movements. 
+    voxel_filter_size: 0.1                          # Voxel Filter the incoming point cloud with this size. # TODO: Potentially make parameter of base class
 
     #### Initializer ####
-    initialize_method: 'linear'                                         # Choose one from 'nearest', 'linear', 'cubic' # NOT PARAM
-    initialize_frame_id: ['base_footprint']                             # One tf (like ['footprint'] ) initializes a square around it. # NOT PARAM
-    initialize_tf_offset: [0.0]                                         # z direction. Should be same number as initialize_frame_id. # NOT PARAM
-    dilation_size_initialize: 2                                         # dilation size after the init. # NOT PARAM
-    initialize_tf_grid_size: 10.0                                        # This is not used if number of tf is more than 3. # NOT PARAM
-    use_initializer_at_start: true                                      # Use initializer when the node starts. # NOT PARAM
-    initialized_variance: 1000.0                                        # initial variance for each cell.   # NOT PARAM
+    initialize_method: 'linear'                                         # Choose one from 'nearest', 'linear', 'cubic' 
+    initialize_frame_id: ['base_footprint']                             # One tf (like ['footprint'] ) initializes a square around it. 
+    initialize_tf_offset: [0.0]                                         # z direction. Should be same number as initialize_frame_id. 
+    dilation_size_initialize: 2                                         # dilation size after the init. 
+    initialize_tf_grid_size: 10.0                                        # This is not used if number of tf is more than 3. 
+    use_initializer_at_start: true                                      # Use initializer when the node starts. 
+    initialized_variance: 1000.0                                        # initial variance for each cell.   
+
+    #### General Publishing Parameters (Only affects publsihing)####
+    map_acquire_fps: 5.0                            # Raw map is fetched from GPU memory in this fps. 
+    enable_pointcloud_publishing: false             
+    recordable_fps: 3.0                             # Recordable fps for pointcloud.
+    publish_statistics_fps: 1.0                     # Publish statistics topic in this fps. 
+    enable_drift_corrected_TF_publishing: false     
+    enable_normal_color: false                      # If true, the map contains 'color' layer corresponding to normal. Add 'color' layer to the publishers setting if you want to visualize. 
+    enable_normal_arrow_publishing: false           
     ############## Management Parameters: For managing the behavior of the node ##############

@@ -42,7 +42,7 @@ ElevationMappingNode::ElevationMappingNode(const rclcpp::NodeOptions& options)
   tfListener_ = std::make_shared<tf2_ros::TransformListener>(*tfBuffer_);
   
   
-  std::string pose_topic, map_frame;
+  std::string map_frame;
   std::vector<std::string> map_topics;
   double recordableFps, updateVarianceFps, timeInterval, updatePoseFps, updateGridMapFps, publishStatisticsFps;
   bool enablePointCloudPublishing(false);
@@ -51,7 +51,6 @@ ElevationMappingNode::ElevationMappingNode(const rclcpp::NodeOptions& options)
 
   this->get_parameter("initialize_frame_id", initialize_frame_id_);
   this->get_parameter("initialize_tf_offset", initialize_tf_offset_);  
-  this->get_parameter("pose_topic", pose_topic);
   this->get_parameter("map_frame", mapFrameId_);
   this->get_parameter("base_frame", baseFrameId_);
   this->get_parameter("corrected_map_frame", correctedMapFrameId_);
@@ -74,7 +73,6 @@ ElevationMappingNode::ElevationMappingNode(const rclcpp::NodeOptions& options)
 
   RCLCPP_INFO(this->get_logger(), "initialize_frame_id: %s", initialize_frame_id_.empty() ? "[]" : initialize_frame_id_[0].c_str());
   RCLCPP_INFO(this->get_logger(), "initialize_tf_offset: [%f, %f, %f, %f]", initialize_tf_offset_[0], initialize_tf_offset_[1], initialize_tf_offset_[2], initialize_tf_offset_[3]);
-  RCLCPP_INFO(this->get_logger(), "pose_topic: %s", pose_topic.c_str());
   RCLCPP_INFO(this->get_logger(), "map_frame: %s", mapFrameId_.c_str());
   RCLCPP_INFO(this->get_logger(), "base_frame: %s", baseFrameId_.c_str());
   RCLCPP_INFO(this->get_logger(), "corrected_map_frame: %s", correctedMapFrameId_.c_str());

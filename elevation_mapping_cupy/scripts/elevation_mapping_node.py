@@ -105,7 +105,7 @@ class ElevationMappingNode(Node):
         self._tf_buffer = tf2_ros.Buffer()
         self._listener = tf2_ros.TransformListener(self._tf_buffer, self)
         self._last_update_time_t = None
-        self._last_updat_variance_t = None
+        self._last_update_variance_t = None
         self.set_param_values_from_ros()
         self.get_ros_params()
     
@@ -128,7 +128,7 @@ class ElevationMappingNode(Node):
         # self.recordable_fps = self.get_parameter('recordable_fps').get_parameter_value().double_value
         self.update_variance_fps = self.get_parameter('update_variance_fps').get_parameter_value().double_value
         self.time_interval = self.get_parameter('time_interval').get_parameter_value().double_value
-        # self.update_pose_fps = self.get_parameter('update_pose_fps').get_parameter_value().double_value
+        self.update_pose_fps = self.get_parameter('update_pose_fps').get_parameter_value().double_value
         # # self.map_acquire_fps = self.get_parameter('map_acquire_fps').get_parameter_value().double_value
         # self.publish_statistics_fps = self.get_parameter('publish_statistics_fps').get_parameter_value().double_value
         # self.enable_pointcloud_publishing = self.get_parameter('enable_pointcloud_publishing').get_parameter_value().bool_value
@@ -266,8 +266,13 @@ class ElevationMappingNode(Node):
             self._publishers_timers.append(timer)
 
     def register_timers(self) -> None:
+        pose_fps = self.update_pose_fps
+        if pose_fps == 0.0:
+            # If pose_fps is 0.0, then we will call the pose_update at a low frequency
+            # but internally it will only update the pose once the map is initialized
+            pose_fps = 1.0
         self.time_pose_update = self.create_timer(
-            0.1,
+            1.0 / pose_fps,
             self.pose_update
         )
         self.timer_variance = self.create_timer(
@@ -554,7 +559,9 @@ class ElevationMappingNode(Node):
             GET_hist.assign_from_instance(GET_curr)
 
     def pose_update(self) -> None:
-        if self._map_t is not None: # TODO: set some parameter to enable not updating the map pose
+        # If pose_fps is 0.0, then we only want to use the pose update to initialize the map
+        if self.update_pose_fps == 0.0 and self._map_t is not None:
+            # TODO: Could remove self.time_pose_update after initialzation
             return
         if self._last_t is None:
             return
@@ -571,15 +578,14 @@ class ElevationMappingNode(Node):
         # Obtain the discretized map position
         self._map_t = self._map.get_position()
         self._map_q = q
-        self._pose_initizlized = True
         self.initialize_map()
 
     def update_variance(self) -> None:
         t2 = self.get_clock().now()
-        if self._last_updat_variance_t is not None:
-            dt = (t2 - self._last_updat_variance_t).nanoseconds / 1e9
+        if self._last_update_variance_t is not None:
+            dt = (t2 - self._last_update_variance_t).nanoseconds / 1e9
             self._map.update_variance(dt)
-        self._last_updat_variance_t = t2
+        self._last_update_variance_t = t2
 
     def update_time(self) -> None:
         t2 = self.get_clock().now()
