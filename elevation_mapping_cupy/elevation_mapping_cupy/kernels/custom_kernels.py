@@ -765,13 +765,14 @@ def update_elevation_reference_kernel(width, height, resolution):
             // Then find the distance between that point and the reference point
             float16 px = cell_center_posx(i, center_x[0]);
             float16 py = cell_center_posy(i, center_y[0]);
+            U valid = map[get_map_idx(i, 2)];
             // Obtain distance between reference point and center of cell i
             // ref_point and px must be in the same coordinate system
             float16 dist = xy_distance(ref_point[0], ref_point[1], px, py);
             debug_dist[i] = dist; // Store the distance for debugging purposes
-            if (dist > radius) {
-                // If distance is greater than the radius, set the reference height to the height of the cell
-                map[get_map_idx(i, 8)] = map[get_map_idx(i, 0)];
+            if (dist > radius && valid > 0.5) {
+                // If distance is greater than the radius, atomically set the reference height to the height of the cell
+                atomicExch(&map[get_map_idx(i, 8)], map[get_map_idx(i, 0)]);
             }
             // Otherwise don't update the reference height
             """
