@@ -1047,7 +1047,13 @@ class GETMovement:
             indices (np.ndarray) (n,2):         The indices of the points in the map (rounded down)
             points_centered (np.ndarray) (n,3): The points represented in the map origin frame
         """
-        pd = points.shape[1]
+        ps = points.shape
+        if len(ps) == 1:
+            pd = ps[0]
+        elif len(ps) == 2:
+            pd = ps[1]
+        else:
+            raise ValueError("points should be 1D or 2D array")
         if center is None:
             center = np.zeros((1,pd))
             points_centered = points
@@ -1219,12 +1225,27 @@ class GETMovement:
         return edge_inds, edge_heights
     
     def fit_plane_near_GET(self, elevation_map, T_OG, normal, map_center, cell_n, resolution, fit_dir, height_layer_ind=0):
-        """
-        Fit a plane to a surface layer of the elevation map in the direction of blade movement.
+        """Fit a plane to a surface layer of the elevation map in the direction of blade movement.
+
         This can be used as a reference for a blade controller
 
-        Let T_MG be the transform to the GET at the end of the sweep. 
-        fit_dir should be the direction from the blade that we want to fit points to (1 for forward, 0 for centered, -1 for negative)
+        Args:
+            elevation_map (np.ndarray):     The elevation map that provides the layer to fit the plane to
+            T_OG (np.ndarray) (4,4):        The transform from the map origin to the GET frame (should be at end of sweep)
+            normal (np.ndarray) (3,):       The normal vector of the plane in the map frame
+            map_center (np.ndarray) (3,):   The center of the map in the map frame
+            cell_n (int):                   The number of cells in the map
+            resolution (float):             The resolution of the map
+            fit_dir (int):                  The direction to fit the plane in. 1 for forward, 0 for centered, -1 for negative
+            height_layer_ind (int):         The index of the height layer to fit the plane to. Default is 0.
+
+        Returns:
+            plane_fit_params (dict):    The parameters for the plane fit with the keys:
+                                        "M_r_MP": The point on the plane in the map frame
+                                        "P_normal": The normal vector of the plane in the map frame
+                                        "G_r_GC0": The bottom right corner (C0) of the GET in the GET frame
+                                        "G_r_C0C1": The vector from the bottom right corner (C0) of the GET to the bottom left corner (C1) of the GET in the GET frame
+                                        "G_normal": The normal vector of the GET in the map frame
         """
         # Construct ROI as shapely polygon
         # Then use the polgon bounds to find the inidicies of the map to check for being within the region using the contains function
@@ -1275,19 +1296,10 @@ class GETMovement:
         # Fit a plane to the points using trimesh SVD method
         C, N = trimesh.points.plane_fit(ROI_points)
 
-        # Find the angle between the normal of the plane and the blade edge vector.
-        # THis will be the roll error of the blade
-        # TODO: Resume here! Need to make blade edge vector in map frame not map origin frame or maybe it doesn't matter because there are no rotaitonal differences just translation
-        blade_edge_vector = bl_pos - br_pos
-        blade_edge_vector = blade_edge_vector / np.linalg.norm(blade_edge_vector)
-        theta = np.arccos(np.dot(N, blade_edge_vector))
-        roll_error = np.pi / 2 - theta
-
-        # Get the relative pitch of the blade with respect to the plane
-        pitch_angle = np.pi / 2 -np.arccos(np.dot(N, normal))
-
         # Plane fit here is in map coordinates not map origin coordinates. Decide if that is what we want
-        return {"C": C, "N": N}
+        return {"M_r_MP": C, "P_normal": N,
+                "G_r_GC0": self.cutting_edge_origin, "G_r_C0C1": self.cutting_edge_vector,
+                "G_normal": self.GET_mesh.face_normals[0].astype(self.data_type)}
         
         
     def get_xy_GET_distance(self, inds, point_z, t_dir, GET_plane_origin, normal, cell_n, resolution):
@@ -1851,6 +1863,70 @@ class GETMovement:
 
         return d_prime, d
     
+    @staticmethod
+    def get_rel_blade_pose(T_MG, plane_fit_params):
+        """ Get the relative pose of the blade wrt the surface defined by the plane_fit_params
+        Args:
+            T_MG (np.ndarray) (4,4):        The transformation matrix from the map frame to the GET frame
+            plane_fit_params (dict):        The parameters for the plane fit with the keys:
+                                                "M_r_MP": The point on the plane in the map frame
+                                                "P_normal": The normal vector of the plane in the map frame
+                                                "G_r_GC0": The bottom right corner (C0) of the GET in the GET frame
+                                                "G_r_C0C1": The vector from the bottom right corner (C0) of the GET to the bottom left corner (C1) of the GET in the GET frame
+                                                "G_normal": The normal vector of the GET in the map frame
+        Returns:
+            pose_dict (dict):    The relative pose of the blade wrt the surface defined by the plane_fit_params with the keys:
+                                    "roll": The roll angle of the blade wrt the surface in radians
+                                    "pitch": The pitch angle of the blade wrt the surface in radians
+                                    "height": The distance of the blade above the surface in meters
+                                    "M_r_MBEC": The position of the blade edge center in the map frame
+
+        """
+        # TODO: Move this into a control class at some point to enable 
+        # Blade Edge parameters
+        G_r_C0C1 = plane_fit_params["G_r_C0C1"]
+        G_r_GC0 = plane_fit_params["G_r_GC0"]
+        # Get blade normal vector in map frame
+        G_normal = T_MG[:3, :3]@plane_fit_params["G_normal"]
+
+        # Plane Fit parameters
+        P_normal = plane_fit_params['P_normal']
+        M_r_MP = plane_fit_params['M_r_MP']
+
+        # Get a normalized blade edge vector in the map frame
+        blade_edge_vector = T_MG[:3, :3] @ G_r_C0C1
+        blade_edge_vector = blade_edge_vector / np.linalg.norm(blade_edge_vector)
+
+        # Blade edge center in map frame
+        M_r_MBEC = T_MG[:3,:3] @ (G_r_GC0 + G_r_C0C1/2.0) + T_MG[:3,3]
+
+        # Vector from plane point to blade edge center in map frame
+        M_r_Cbec = M_r_MBEC - M_r_MP
+
+        # Extract the relative pose
+        # roll_angle is the angle between the blade edge and the surface
+        theta = np.arccos(np.dot(P_normal, blade_edge_vector))
+        roll_angle = np.pi / 2 - theta
+
+        # pitch_angle is the angle between the blade normal and the plane 
+        pitch_angle = np.pi / 2 -np.arccos(np.dot(P_normal, G_normal))
+        
+        # blade_cent_dist distance is the distance between the blade and the blane at the center
+        # Plane equation from normal and point on the plane is 
+        # P_normal[0](x-C[0]) + P_normal[1](y-C[1]) + P_normal[2](z-C[2]) = 0
+        # Convert to ax + by + cz + d = 0
+        a = P_normal[0]
+        b = P_normal[1]
+        c = P_normal[2]
+        d = -P_normal[0]*M_r_MP[0] - P_normal[1]*M_r_MP[1] - P_normal[2]*M_r_MP[2]
+        dist = np.abs(a*M_r_MBEC[0] + b*M_r_MBEC[1] + c*M_r_MBEC[2] + d)/ np.sqrt(a**2+b**2+c**2)
+        # Get sign of dist based on dot product between vector from plane point to blade edge center point
+        sgn = np.sign(np.dot(P_normal, M_r_Cbec))
+        height = sgn * dist
+
+        return {"roll": roll_angle, "pitch": pitch_angle, "height": height, "M_r_MBEC": M_r_MBEC}
+        
+    
     def update_map_with_swept_volume(self, swept_mesh, normal, translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params={}, obtain_FEE_em_params=True, GET_plane_origin=None):
         """
         Update the elevation map in place with the a swept volume derived from the GET. The coordinate frame is
@@ -2242,7 +2318,7 @@ class GETMovement:
         
         # Fit a plane to the map surface near the GET
         # TODO: Fit a plane to the desired surface and the frozen reference surface
-        self.plane_fit_params = self.fit_plane_near_GET(elevation_map, T_OG1, normal_G1, map_center, cell_n, resolution, fit_dir, height_layer_ind=0)
+        plane_fit_params = self.fit_plane_near_GET(elevation_map, T_OG1, normal_G1, map_center, cell_n, resolution, fit_dir, height_layer_ind=0)
 
         # Check that the translation is in the direction of the normal when we don't have a self intersection
         if (pos_swept_mesh is not None) != (neg_swept_mesh is not None):
@@ -2371,7 +2447,7 @@ class GETMovement:
             GET_inds = GET_inds_neg
         
         # Only return positive FEE parameters for now
-        return elevation_updated, FEE_em_params, FEE_valid, surf_points_dict, intersected_inds, move_dir, deposit_inds, GET_heights, GET_inds
+        return elevation_updated, FEE_em_params, FEE_valid, surf_points_dict, intersected_inds, move_dir, deposit_inds, GET_heights, GET_inds, plane_fit_params
 
 
 if __name__ == "__main__":

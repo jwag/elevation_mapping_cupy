@@ -564,7 +564,7 @@ class ElevationMap:
         with self.map_lock:
             center = self.get_position()
             # TODO: Make the varh derived from the pose uncertainty and use a sensor model
-            elevation_updated, FEE_em_params, FEE_valid, surf_points_dict, intersected_inds, move_dir, deposit_inds, GET_heights, GET_inds = self.GETs[GET_ID].update_map_with_GET_movement(
+            elevation_updated, FEE_em_params, FEE_valid, surf_points_dict, intersected_inds, move_dir, deposit_inds, GET_heights, GET_inds, plane_fit_params = self.GETs[GET_ID].update_map_with_GET_movement(
                 self.elevation_map,
                 center,
                 self.cell_n,
@@ -663,7 +663,7 @@ class ElevationMap:
                                                         updated_inds=soil_wedge_inds,
                                                         )
         # TODO: Possibly get rid of surf_points_dict and just return FEE_em_params once we get working with semantic map
-        return FEE_em_params, surf_points_dict
+        return FEE_em_params, surf_points_dict, plane_fit_params
     
     def perform_soil_erosion(self,
                             GET_ID: str,
@@ -801,6 +801,30 @@ class ElevationMap:
         """
         d_prime, d = self.GETs[GET_ID].get_blade_depth(M_r_MG, vel_xy, xp.asnumpy(self.center.flatten()))
         return d_prime, d
+    
+    def get_GET_relative_blade_pose(self,
+        T_MG: cp._core.core.ndarray,
+        plane_fit_params: dict = None,
+        ):
+        """Get the relative blade pose in the map frame.
+        Args:
+            T_MG (np.ndarray) (4,4):    The transformation matrix from the map frame to the GET frame
+            plane_fit_params (dict):    The parameters for the plane fit with the keys:
+                                            "M_r_MP": The point on the plane in the map frame
+                                            "P_normal": The normal vector of the plane in the map frame
+                                            "G_r_GC0": The bottom right corner (C0) of the GET in the GET frame
+                                            "G_r_C0C1": The vector from the bottom right corner (C0) of the GET to the bottom left corner (C1) of the GET in the GET frame
+                                            "G_normal": The normal vector of the GET in the map frame
+        Returns:
+            pose_dict (dict):           The relative pose of the blade wrt the surface defined by the plane_fit_params with the keys:
+                                            "roll": The roll angle of the blade wrt the surface in radians
+                                            "pitch": The pitch angle of the blade wrt the surface in radians
+                                            "height": The distance of the blade above the surface in meters
+                                            "M_r_MBEC": The position of the blade edge center in the map frame
+        """
+        # TODO: Move this out of elevation mapping as a controller will want to do the interpolation locally to decrease latency
+        pose_dict = GETMovement.get_rel_blade_pose(T_MG, plane_fit_params)
+        return pose_dict
 
     def input_pointcloud(
         self,
