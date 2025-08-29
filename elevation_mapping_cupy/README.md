@@ -37,7 +37,7 @@ ros2 run rmw_zenoh_cpp rmw_zenohd
 
 Connect an XBOX controller to the linux machine and run the joy node
 ```bash
-ros2 run joy joy_node
+ros2 run joy joy_node --ros-args -p use_sim_time:=true
 ```
 
 On the Windows Machine launch the Vortex :
