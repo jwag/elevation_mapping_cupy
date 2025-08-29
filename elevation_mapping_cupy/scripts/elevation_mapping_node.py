@@ -66,7 +66,7 @@ class ElevationMappingNode(Node):
         self.register_publishers()
         self.register_timers()
         self._last_t = None
-        self.tf_offset = rclpy.time.Duration(seconds=0.1)
+        self.tf_offset = rclpy.time.Duration(seconds=0.2)
 
     def initialize_elevation_mapping(self) -> None:
         self._pointcloud_process_counter = 0
@@ -124,7 +124,7 @@ class ElevationMappingNode(Node):
     def initialize_ros(self) -> None:
         # For rolling and beyond checkout bitbots_tf2 from bitbots_tf_buffer import Buffer
         self._tf_buffer = tf2_ros.Buffer()
-        self._listener = tf2_ros.TransformListener(self._tf_buffer, self, spin_thread=False)
+        self._listener = tf2_ros.TransformListener(self._tf_buffer, self, spin_thread=True)
         self._last_update_time_t = None
         self._last_update_variance_t = None
         self.set_param_values_from_ros()
@@ -243,9 +243,9 @@ class ElevationMappingNode(Node):
                 #     durability=rclpy.qos.DurabilityPolicy.VOLATILE,
                 #     history=rclpy.qos.HistoryPolicy.KEEP_LAST
                 # )
-                # qos_profile = QoSPresetProfiles.get_from_short_key("sensor_data")
+                qos_profile = QoSPresetProfiles.get_from_short_key("sensor_data")
                 # qos_profile = rclpy.qos.QoSProfile(depth=10)
-                qos_profile = 10
+                # qos_profile = 10
                 subscription = self.create_subscription(
                     PointCloud2,
                     topic_name,
@@ -420,7 +420,8 @@ class ElevationMappingNode(Node):
             mask = np.isfinite(cloud_array['x']) & \
                 np.isfinite(cloud_array['y']) & \
                 np.isfinite(cloud_array['z'])
-            cloud_array = np.where(mask[..., None], cloud_array, np.nan)
+            # cloud_array = np.where(mask[..., None], cloud_array, np.nan)
+            cloud_array = cloud_array[mask]
 
         # pull out x, y, and z values
         points = np.zeros(cloud_array.shape + (3,), dtype=dtype)
