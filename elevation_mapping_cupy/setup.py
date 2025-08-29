@@ -1,8 +1,8 @@
 from setuptools import setup, find_packages
 from glob import glob
 import os
-ROS_ENABLED = True # how can we define this globally
-SOIL_MAP_ENABLED = True # can we define this globally
+ROS_ENABLED = False # how can we define this globally
+SOIL_MAP_ENABLED = False # can we define this globally
 
 package_name = 'elevation_mapping_cupy'
 if ROS_ENABLED:
@@ -52,7 +52,12 @@ else:
     setup(
         name=package_name,
         version='1.0',
-        packages=[package_name, package_name+'.plugins'],
-        package_dir={'': package_name},
+        packages=find_packages(include=[package_name, f'{package_name}.*']),
+        # package_dir={'': package_name},
         install_requires=install_requires,
+        data_files=[
+            *[(os.path.join('build', package_name, os.path.dirname(yaml_file)), [yaml_file]) for yaml_file in glob('config/**/*.yaml', recursive=True)],
+            # also the .*dat files
+            *[(os.path.join('build', package_name, os.path.dirname(dat_file)), [dat_file]) for dat_file in glob('config/**/*.dat', recursive=True)],
+        ]
     )
