@@ -553,7 +553,6 @@ class ElevationMappingNode(Node):
                             T_MG1=T_MG1,
                             M_r_MG=M_r_MG,
                             n_steps=n_steps,
-                            dt=dt,
                             var_h=var_h,
                             roll= roll)
             # Update the history with the current message
