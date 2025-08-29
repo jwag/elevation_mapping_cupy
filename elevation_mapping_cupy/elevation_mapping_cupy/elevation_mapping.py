@@ -534,7 +534,6 @@ class ElevationMap:
                            T_MG1: cp._core.core.ndarray,
                            M_r_MG: np.ndarray,
                            n_steps: np.int32,
-                           dt: float,
                            var_h: float,
                            roll: float = None,
                            soil_nn_input: dict = None
@@ -547,7 +546,6 @@ class ElevationMap:
             T_MG1 (cupy._core.core.ndarray):            Transformation matrix from the GET frame to the map frame at time t1
             M_r_MG (np.ndarray) (n_steps,3):            Position of the GET frame w.r.t. the map frame over time steps
             n_steps (np.int32):                         Number of time steps between T_MG0 and T_MG1 (inclusive) used for interpolation
-            dt (float):                                 Time elapsed between T_MG0 and T_MG1
             var_h (float):                              Variance of the height measurement
             roll (float):                               Roll angle of the GET frame w.r.t. the map frame. If None will compute roll 
                                                         from tranform, but could slow down processing.
