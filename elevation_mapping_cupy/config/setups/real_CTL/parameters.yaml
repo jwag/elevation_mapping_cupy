@@ -98,6 +98,10 @@ elevation_mapping_node:
     update_pose_fps: 1.0                            # fps for updating pose and shift the center of map. Set to 0 to disable.
     GET_tf_fps: 20.0                                # fps for updating GET tf.
     time_interval: 0.1                              # Time layer is updated with this interval.
+    tf_lookup_offset: 0.05                          # Offset for tf lookup. This is used to avoid the extrapolation errors in the GET tf and for initialization of the map
+    process_queue_fps: 10.0                         # fps for processing the queue.
+    max_pointcloud_process_queue_size: 10           # Size of the queue for processing the pointcloud. If the queue is full, the oldest pointcloud will be dropped.
+    max_pointcloud_process_queue_age: 0.5           # Maximum age of the pointcloud in the queue. If the pointcloud is older than this value, it will be dropped.
     position_lowpass_alpha: 0.2                     # lowpass filter alpha used for detecting movements. 
     orientation_lowpass_alpha: 0.2                  # lowpass filter alpha used for detecting movements. 
     voxel_filter_size: 0.1                          # Voxel Filter the incoming point cloud with this size. # TODO: Potentially make parameter of base class

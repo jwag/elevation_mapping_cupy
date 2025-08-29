@@ -2133,7 +2133,7 @@ class GETMovement:
                     # The variance of the cell is then updated based on the remaining variance and the variance of the blade height
                     # The maximum of the two is taken as the new variance
                     remaining_h_std = np.maximum((np.sqrt(start_var) - delta_h), 0.0)
-                    submap[1, intersected_cells[:,0], intersected_cells[:,1]] = np.maximum(remaining_h_std, np.sqrt(var_h))**2
+                    submap[1, intersected_cells[:,0], intersected_cells[:,1]] = np.minimum(np.maximum(remaining_h_std, np.sqrt(var_h))**2, self.param.max_variance)
                     # TODO: Consider updating the time layer here as well. Do we that layer to only be for lidar observations, or also for GET updates?
                     submap[4, intersected_cells[:,0], intersected_cells[:,1]] = 0.0
                     # Update the upper bound of the overlapping cells (set to the updated elevation)
@@ -2156,7 +2156,7 @@ class GETMovement:
                     # 3. The standard deviation of the blade height minus the change in cell height (minimum of 0 if negative)
                     # Which ever of these is the largest is used as the upper bound as it the highest possible value of the soil in the deposited cell for a 1 sigma bound
                     deposit_delta_std_h = (delta_h + np.sqrt(var_h) + np.max([np.sqrt(start_var), delta_h_swelled - delta_h, np.maximum(np.sqrt(var_h)-delta_h, 0.0)]))/2.0
-                    deposit_delta_var_h = deposit_delta_std_h**2
+                    deposit_delta_var_h = np.minimum(deposit_delta_std_h**2, self.param.max_variance)
                     # Deposit the material in the a new location
                     # Get the indices of the cells that lie under the projection of the swept volume onto the xy plane
                     # Note: using GET_cells instead of intersected_cells because it is possible for soil to be deposited behind

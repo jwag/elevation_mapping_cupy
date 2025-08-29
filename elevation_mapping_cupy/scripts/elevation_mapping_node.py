@@ -64,17 +64,9 @@ class ElevationMappingNode(Node):
         self.register_publishers()
         self.register_timers()
         self._last_t = None
-        self.tf_offset = rclpy.time.Duration(seconds=0.2)
-
-        # Timer to process buffered messages
-        # TODO: Make this a parameter
-        self.timer = self.create_timer(0.1, self.process_queues)
+        
 
         # Queues for buffering messages
-        self.pointcloud_queue_max_size = 100
-        self.image_queue_max_size = 100
-        self.pointcloud_queue_max_age = Duration(seconds=0.5)
-        self.image_queue_max_age = Duration(seconds=0.5)
         self.pointcloud_queue = deque()
         self.pointcloud_sub_key_queue = deque()
         self.image_queue = deque()
@@ -96,7 +88,7 @@ class ElevationMappingNode(Node):
     
 
     def process_queues(self):
-        self.get_logger().info("Starting Processing queues")
+        # self.get_logger().info("Starting Processing queues")
         current_time = self.get_clock().now()
 
         # Take a quick snapshot
@@ -106,7 +98,7 @@ class ElevationMappingNode(Node):
             self.pointcloud_queue.clear()
             self.pointcloud_sub_key_queue.clear()
 
-        # Now work on the local copy without locks
+        # Now work on the local copy without locks                          # Offset for tf lookup. This is used to avoid the extrapolation errors in the GET tf and for initialization of the map
         new_pointcloud_queue = []
         new_pointcloud_sub_key_queue = []
 
@@ -114,13 +106,13 @@ class ElevationMappingNode(Node):
             msg_time = Time.from_msg(msg.header.stamp)
             age = current_time - msg_time
 
-            if age > self.pointcloud_queue_max_age:
-                self.get_logger().warn(f"Pointcloud message is too old. Dropping oldest message. Age: {age}")
-                self.get_logger().warn(f"Pointcloud queue size: {len(pointcloud_queue)}")
+            if age > self.max_pointcloud_process_queue_age:
+                self.get_logger().warn(f"Pointcloud message is too old. Dropping oldest message. Age: {age.nanoseconds / 1e9} seconds")
+                # self.get_logger().warn(f"Pointcloud queue size: {len(pointcloud_queue)}")
                 continue
 
             if self.try_process_pointcloud(msg, sub_key):
-                self.get_logger().info("Successfully processed pointcloud message.")
+                # self.get_logger().info("Successfully processed pointcloud message.")
                 continue  # Message processed successfully
             else:
                 # Couldn't process, put it back for next time
@@ -128,14 +120,20 @@ class ElevationMappingNode(Node):
                 new_pointcloud_sub_key_queue.append(sub_key)
                 break  # Assume we should wait for the transform before going further
 
+        # If the buffer size is exceeded, drop the oldest messages
+        if len(new_pointcloud_queue) > self.max_pointcloud_process_queue_size:
+            excess = len(new_pointcloud_queue) - self.max_pointcloud_process_queue_size
+            self.get_logger().warn(f"Pointcloud queue exceeded max size. Dropping {excess} oldest messages.")
+            new_pointcloud_queue = new_pointcloud_queue[excess:]
+            new_pointcloud_sub_key_queue = new_pointcloud_sub_key_queue[excess:]
+
         # If any unprocessed messages, put them back quickly
         if new_pointcloud_queue:
-            self.get_logger().info(f"Re-adding {len(new_pointcloud_queue)} unprocessed pointcloud messages to the front of the queue.")
+            # self.get_logger().info(f"Re-adding {len(new_pointcloud_queue)} unprocessed pointcloud messages to the front of the queue.")
             with self.msg_filter_lock:
                 # Prepend unprocessed ones to the front
                 self.pointcloud_queue.extendleft(reversed(new_pointcloud_queue))
                 self.pointcloud_sub_key_queue.extendleft(reversed(new_pointcloud_sub_key_queue))
-                
             # # Process Image messages
             # while len(self.image_queue) > self.image_queue_max_size:
             #     self.image_queue.popleft()
@@ -157,7 +155,7 @@ class ElevationMappingNode(Node):
             #     self.camera_info_queue.appendleft(camera_info_msg)
             #     self.image_sub_key_queue.appendleft(sub_key)
             #     break  # Wait for transform to become available
-        self.get_logger().info("Finished Processing queues")
+        # self.get_logger().info("Finished Processing queues")
 
     def try_process_pointcloud(self, msg: PointCloud2, sub_key: str) -> bool:
         frame_sensor_id = msg.header.frame_id
@@ -217,7 +215,7 @@ class ElevationMappingNode(Node):
                 transform = self.safe_lookup_transform(
                     self.map_frame,
                     frame_id,
-                    self.get_clock().now()-self.tf_offset)
+                    self.get_clock().now()-self.tf_lookup_offset)
                 t = transform.transform.translation
                 p = np.array([t.x, t.y, t.z])
                 p[2] += self.initialize_tf_offset[i]
@@ -278,6 +276,13 @@ class ElevationMappingNode(Node):
         self.time_interval = self.get_parameter('time_interval').get_parameter_value().double_value
         self.update_pose_fps = self.get_parameter('update_pose_fps').get_parameter_value().double_value
         self.GET_tf_fps = self.get_parameter('GET_tf_fps').get_parameter_value().double_value
+        # TODO: THis timer rate should be a param
+        tf_lookup_offset = self.get_parameter('tf_lookup_offset').get_parameter_value().double_value
+        self.tf_lookup_offset = rclpy.time.Duration(seconds=tf_lookup_offset)
+        self.process_queue_fps = self.get_parameter('process_queue_fps').get_parameter_value().double_value
+        self.max_pointcloud_process_queue_size = self.get_parameter('max_pointcloud_process_queue_size').get_parameter_value().integer_value
+        max_pointcloud_process_queue_age = self.get_parameter('max_pointcloud_process_queue_age').get_parameter_value().double_value
+        self.max_pointcloud_process_queue_age = rclpy.time.Duration(seconds=max_pointcloud_process_queue_age)
         # # self.map_acquire_fps = self.get_parameter('map_acquire_fps').get_parameter_value().double_value
         # self.publish_statistics_fps = self.get_parameter('publish_statistics_fps').get_parameter_value().double_value
         # self.enable_pointcloud_publishing = self.get_parameter('enable_pointcloud_publishing').get_parameter_value().bool_value
@@ -446,6 +451,9 @@ class ElevationMappingNode(Node):
             self.time_interval,
             self.update_time
         )
+
+        # Timer to process buffered messages
+        self.process_queue_timer = self.create_timer(1.0/self.process_queue_fps, self.process_queues)
 
     def publish_map(self, key: str) -> None:
         if not self.pose_initialized:
@@ -769,12 +777,30 @@ class ElevationMappingNode(Node):
         odom_msg.twist.twist.angular.x = 0.0
         odom_msg.twist.twist.angular.y = 0.0
         odom_msg.twist.twist.angular.z = 0.0
+
+        # TODO: Fill out the covariance here and use param to set vallues
+        odom_msg.pose.covariance = [
+            100.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 100.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 100.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, (np.pi / 2) ** 2, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, (np.pi / 2) ** 2, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, (np.pi / 2) ** 2
+        ]
+        odom_msg.twist.covariance = [
+            100.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 100.0, 0.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 100.0, 0.0, 0.0, 0.0,
+            0.0, 0.0, 0.0, (np.pi / 2) ** 2, 0.0, 0.0,
+            0.0, 0.0, 0.0, 0.0, (np.pi / 2) ** 2, 0.0,
+            0.0, 0.0, 0.0, 0.0, 0.0, (np.pi / 2) ** 2
+        ]
         return odom_msg
 
     def GET_tf_callback(self, sub_key: str) -> None:
         # self.get_logger().info(f"Received GET odometry message for {sub_key}")
         # Adding a small delay to the last time to avoid tf2 lookup issues
-        self._last_t = self.get_clock().now() - self.tf_offset
+        self._last_t = self.get_clock().now() - self.tf_lookup_offset
         GET_hist = self._GET_subs_history[sub_key]
         try:
             msg = self.odom_msg_from_tf(

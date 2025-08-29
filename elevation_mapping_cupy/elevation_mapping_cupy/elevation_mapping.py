@@ -1090,6 +1090,14 @@ class ElevationMap:
             variance layer
         """
         return self.process_map_for_publish(self.elevation_map[1], fill_nan=False, add_z=False)
+    
+    def get_is_valid(self):
+        """Get the is valid layer.
+
+        Returns:
+            is_valid layer
+        """
+        return self.process_map_for_publish(self.elevation_map[2], fill_nan=False, add_z=False)
 
     def get_traversability(self):
         """Get the traversability layer.
@@ -1214,6 +1222,8 @@ class ElevationMap:
                 use_stream = False
             elif name == "variance":
                 m = self.get_variance()
+            elif name == "is_valid":
+                m = self.get_is_valid()
             elif name == "traversability":
                 m = self.get_traversability()
             elif name == "time":

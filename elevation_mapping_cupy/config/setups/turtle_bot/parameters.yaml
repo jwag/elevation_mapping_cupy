@@ -20,7 +20,7 @@ elevation_mapping_node:
     min_height_drift_cnt: 100                       # drift compensation only happens if the valid cells are more than this number.
     position_noise_thresh: 0.01                     # if the position change is bigger than this value, the drift compensation happens.
     orientation_noise_thresh: 0.01                  # if the orientation change is bigger than this value, the drift compensation happens.
-    min_valid_distance: 0.1                         # points with shorter distance will be filtered out.
+    min_valid_distance: 1.0                        # points with shorter distance will be filtered out.
     max_height_range: 10.5                          # points higher than this value from sensor will be filtered out to disable ceiling.
     ramped_height_range_a: 0.3                      # if z > max(d - ramped_height_range_b, 0) * ramped_height_range_a + ramped_height_range_c, reject.
     ramped_height_range_b: 1.0                      # if z > max(d - ramped_height_range_b, 0) * ramped_height_range_a + ramped_height_range_c, reject.
@@ -93,7 +93,12 @@ elevation_mapping_node:
     corrected_map_frame: 'odom'                     
     update_variance_fps: 5.0                        # fps for updating variance. 
     update_pose_fps: 10.0                           # fps for updating pose and shift the center of map. Set to 0 to disable.
+    GET_tf_fps: 20.0                                # fps for updating GET tf.
     time_interval: 0.1                              # Time layer is updated with this interval.
+    tf_lookup_offset: 0.05                          # Offset for tf lookup. This is used to avoid the extrapolation errors in the GET tf and for initialization of the map
+    process_queue_fps: 10.0                         # fps for processing the queue.
+    max_pointcloud_process_queue_size: 10           # Size of the queue for processing the pointcloud. If the queue is full, the oldest pointcloud will be dropped.
+    max_pointcloud_process_queue_age: 0.5           # Maximum age of the pointcloud in the queue. If the pointcloud is older than this value, it will be dropped.
     position_lowpass_alpha: 0.2                     # lowpass filter alpha used for detecting movements. 
     orientation_lowpass_alpha: 0.2                  # lowpass filter alpha used for detecting movements. 
     voxel_filter_size: 0.1                          # Voxel Filter the incoming point cloud with this size. # TODO: Potentially make parameter of base class
@@ -104,7 +109,7 @@ elevation_mapping_node:
     initialized_variance: 1000.0                                        # initial variance for each cell.
     # Config for points initializer # TODO: rename these with points prefix
     initialize_method: 'linear'                                         # Choose one from 'nearest', 'linear', 'cubic'
-    initialize_frame_id: ['base_footprint']                             # One tf (like ['footprint'] ) initializes a square around it. 
+    initialize_frame_id: ['base_link']                             # One tf (like ['footprint'] ) initializes a square around it. 
     initialize_tf_offset: [0.0]                                         # z direction. Should be same number as initialize_frame_id. 
     dilation_size_initialize: 2                                         # dilation size after the init. 
     initialize_tf_grid_size: 10.0                                        # This is not used if number of tf is more than 3. 
