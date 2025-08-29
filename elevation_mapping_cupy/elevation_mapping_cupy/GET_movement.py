@@ -1985,7 +1985,9 @@ class GETMovement:
         roll_angle = np.pi / 2 - theta
 
         # pitch_angle is the angle between the blade normal and the plane 
-        pitch_angle = np.pi / 2 -np.arccos(np.dot(P_normal, G_normal))
+        # Ensure the dot product is within the valid domain of arccos [-1, 1]
+        dot_product = np.clip(np.dot(P_normal, G_normal), -1.0, 1.0)
+        pitch_angle = np.pi / 2 - np.arccos(dot_product)
         
         # blade_cent_dist distance is the distance between the blade and the blane at the center
         # Plane equation from normal and point on the plane is 
