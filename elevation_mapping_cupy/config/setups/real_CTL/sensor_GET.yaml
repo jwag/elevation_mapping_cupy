@@ -17,7 +17,7 @@
 
     subscribers:
         front_zed:
-            topic_name: '/front/zed_node/point_cloud/cloud_registered'
+            topic_name: '/zed_multi/zed_front/point_cloud/cloud_registered'
             data_type: pointcloud
             channels: ['rgb']
             noise_model_name: SLS_old
@@ -40,7 +40,7 @@
                 Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
                 Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
         rear_zed:
-            topic_name: '/rear/zed_node/point_cloud/cloud_registered'
+            topic_name: '/zed_multi/zed_back/point_cloud/cloud_registered'
             data_type: pointcloud
             channels: ['rgb']
             noise_model_name: SLS_old

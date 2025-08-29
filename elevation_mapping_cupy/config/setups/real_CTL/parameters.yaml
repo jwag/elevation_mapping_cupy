@@ -5,7 +5,7 @@ elevation_mapping_node:
     average_weight: 0.5                             # The weight for the average fusion.  
     checker_layer: 'elevation'                      # layer name for checking the validity of the cell.
     resolution: 0.3                                 # resolution in m.  
-    map_length: 15.0                                # map's size in m.
+    map_length: 22.5                                # map's size in m.
     mahalanobis_thresh: 2.0                         # points outside this number of std deviation are considered as outliers.
     outlier_variance: 0.01                          # if point is outlier, add this value to the cell.
     drift_compensation_variance_inlier: 10.0        # cells under this value is used for drift compensation.

@@ -62,9 +62,11 @@ def generate_launch_description():
         parameters=[
             ParameterFile(core_param_path, allow_substs=True), 
             sensor_param_path,
-            {'use_sim_time': use_sim_time}
+            {'use_sim_time': use_sim_time},
+            {'respawn': True},
         ],
         condition=IfCondition(use_python_node)
+        # respawn=True,
         # condition=IfCondition(PythonExpression(use_python_node))
     )
 
@@ -76,9 +78,11 @@ def generate_launch_description():
         parameters=[
             ParameterFile(core_param_path, allow_substs=True), 
             sensor_param_path,
-            {'use_sim_time': use_sim_time}
+            {'use_sim_time': use_sim_time},
+            {'respawn': True},
         ],
         condition=UnlessCondition(use_python_node)
+        # respawn = True,
         # condition=UnlessCondition(PythonExpression(use_python_node))
         )
     
