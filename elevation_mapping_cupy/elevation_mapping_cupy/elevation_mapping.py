@@ -85,7 +85,8 @@ class ElevationMap:
             "time",
             "upper_bound",
             "is_upper_bound",
-            "elevation_loose"
+            "elevation_loose",
+            "elevation_reference"
         ]
         self.elevation_map = xp.zeros((len(self.layer_names), self.cell_n, self.cell_n), dtype=self.data_type)
 
@@ -157,7 +158,7 @@ class ElevationMap:
                 GET_model_name = config["GET_model_name"]
                 GET_param_name = GET_model_name + "_GET_params"
                 GET_params = config.get(GET_param_name, {})
-                self.GETs[sensor_ID] = GETMovement(sensor_ID, GET_model_name, param, GET_params, xp=xp)
+                self.GETs[sensor_ID] = GETMovement(sensor_ID, GET_model_name, param, GET_params, self.layer_names, xp=xp)
                 # Only load a single soil prop est model for now
                 # if param.use_soil_property_estimation:
                 #     if not hasattr(self, 'dz'):
@@ -283,6 +284,8 @@ class ElevationMap:
             self.elevation_map[0] += delta_z
             # upper bound
             self.elevation_map[5] += delta_z
+            # elevation_reference
+            self.elevation_map[8] += delta_z
 
     def compile_kernels(self):
         """Compile all kernels belonging to the elevation map."""
@@ -1052,6 +1055,14 @@ class ElevationMap:
 
         """
         return self.process_map_for_publish(self.elevation_map[0] - self.elevation_map[7], fill_nan=True, add_z=False, no_copy=True)
+    
+    def get_elevation_reference(self):
+        """Get the reference elevation layer.
+        
+        Returns:
+            elevation reference layer
+        """
+        return self.process_map_for_publish(self.elevation_map[8], fill_nan=True, add_z=True, no_copy=True)
 
     def get_variance(self):
         """Get the variance layer.
@@ -1196,6 +1207,8 @@ class ElevationMap:
                 m = self.get_elevation_loose()
             elif name == "elevation_compact":
                 m = self.get_elevation_compact()
+            elif name == "elevation_reference":
+                m = self.get_elevation_reference()
             elif name == "normal_x":
                 m = self.normal_map.copy()[0, 1:-1, 1:-1]
             elif name == "normal_y":

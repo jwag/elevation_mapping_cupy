@@ -59,6 +59,8 @@ class MapInitializer(object):
 
         # Update elevation map.
         elevation_map[0] = self.xp.nan_to_num(interpolated)
+        # Make the elevation_reference the same as the initial elevation
+        elevation_map[8] = self.xp.nan_to_num(interpolated)  # elevation_reference
         elevation_map[1] = self.xp.where(
             self.xp.invert(self.xp.isnan(interpolated)), new_variance, self.initial_variance
         )
@@ -83,7 +85,12 @@ class MapInitializer(object):
 
         # Update elevation map
         elevation_map[0,1:-1,1:-1] = heightmap
+        # Make the elevation_reference the same as the initial elevation
+        # TODO: Make this configurable or add another initializer
+        elevation_map[8,1:-1,1:-1] = heightmap
+        # Set variance for the new heightmap area
         elevation_map[1,1:-1,1:-1] = self.xp.full_like(heightmap, new_variance)
+        # Set entire map as valid
         elevation_map[2,1:-1,1:-1] = self.xp.ones_like(heightmap)
         return
 

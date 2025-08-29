@@ -899,7 +899,7 @@ class GETMovement:
     library or a fully custom implementation of the swept volume generation.
     """
 
-    def __init__(self, GET_ID, GET_model_name, param: Parameter, GET_params, xp=np, data_type=np.float32):
+    def __init__(self, GET_ID, GET_model_name, param: Parameter, GET_params, layer_names, xp=np, data_type=np.float32):
         """Initialize GET for a specific sensor.
 
         Args:
@@ -907,12 +907,14 @@ class GETMovement:
             GET_model_name (str):   Type of GET. Only "simple_blade" is supported for now.
             param (dict):          Parameters for the elevation map.
             GET_params (dict):      Parameters for the chosen GET type specified in GET_name.
+            layer_names (list):     List of layer names for the elevation map. This is used to identify the layers in the elevation map.
             xp (module):            Numpy or CuPy module. Default is numpy. Will not be used for trimesh operations.
             data_type (dtype):      Data type for the GET geometry. Default is np.float32.
         """
         self.xp = xp
         self.data_type = data_type
         self.GET_ID = GET_ID
+        self.layer_names = layer_names
 
         # TODO: Add support for more complex GETs
         self.GET_models = {"simple_blade": self.simple_blade_geometry,}
@@ -938,6 +940,31 @@ class GETMovement:
         self.pos_swept_mesh_FEE_projection_params = None
         self.neg_swept_mesh_FEE_projection_params = None
         self.ground_proj_params = None
+    
+    def get_layer(self, elevation_map, layer_name: str):
+        """
+        Get the layer object from the elevation map by its name.
+        
+        Args:
+            elevation_map (ElevationMap): The elevation map array containing the layers.
+            layer_name (str): The name of the layer to retrieve.
+        
+        Returns:
+            Layer object corresponding to the given layer name.
+        
+        Raises:
+            ValueError: If the layer name does not exist in the elevation map.
+        """
+        if layer_name == 'elevation_compact':
+            elev_ind = self.layer_names.index('elevation')
+            loose_ind = self.layer_names.index('elevation_loose')
+            return_layer = elevation_map[elev_ind] - elevation_map[loose_ind]
+        elif layer_name in self.layer_names:
+            return_layer = elevation_map[self.layer_names.index(layer_name)]
+        else:
+            # Raise an error if the layer name is not found
+            raise ValueError(f"Layer '{layer_name}' not found in the elevation map.")
+        return return_layer
 
     def simple_blade_geometry(self, blade_width=3.0, blade_height=0.6, **kwargs):
         """
@@ -1224,7 +1251,7 @@ class GETMovement:
                 break
         return edge_inds, edge_heights
     
-    def fit_plane_near_GET(self, elevation_map, T_OG, normal, map_center, cell_n, resolution, fit_dir, height_layer_ind=0):
+    def fit_plane_near_GET(self, elevation_map, T_OG, normal, map_center, cell_n, resolution, fit_dir, height_layer_name='elevation'):
         """Fit a plane to a surface layer of the elevation map in the direction of blade movement.
 
         This can be used as a reference for a blade controller
@@ -1237,7 +1264,7 @@ class GETMovement:
             cell_n (int):                   The number of cells in the map
             resolution (float):             The resolution of the map
             fit_dir (int):                  The direction to fit the plane in. 1 for forward, 0 for centered, -1 for negative
-            height_layer_ind (int):         The index of the height layer to fit the plane to. Default is 0.
+            height_layer_name (str):        The name of the layer in the elevation map to fit the plane to.
 
         Returns:
             plane_fit_params (dict):    The parameters for the plane fit with the keys:
@@ -1291,7 +1318,7 @@ class GETMovement:
         # Get the points in the map frame
         ROI_points = self.map_index_to_point_xy(ROI_inds, map_center, cell_n, resolution)
         # Get the height of the ROI points
-        ROI_points_z = elevation_map[height_layer_ind, ROI_inds[:,0], ROI_inds[:,1]].get() + map_center[2]
+        ROI_points_z = self.get_layer(elevation_map, height_layer_name)[ROI_inds[:,0], ROI_inds[:,1]].get() + map_center[2]
         ROI_points = np.concatenate((ROI_points, ROI_points_z.reshape(-1,1)), axis=1)
         # Fit a plane to the points using trimesh SVD method
         C, N = trimesh.points.plane_fit(ROI_points)
@@ -2322,7 +2349,7 @@ class GETMovement:
         
         # Fit a plane to the map surface near the GET
         # TODO: Fit a plane to the desired surface and the frozen reference surface
-        plane_fit_params = self.fit_plane_near_GET(elevation_map, T_OG1, normal_G1, map_center, cell_n, resolution, fit_dir, height_layer_ind=0)
+        plane_fit_params = self.fit_plane_near_GET(elevation_map, T_OG1, normal_G1, map_center, cell_n, resolution, fit_dir, height_layer_name='elevation_reference')
 
         # Check that the translation is in the direction of the normal when we don't have a self intersection
         if (pos_swept_mesh is not None) != (neg_swept_mesh is not None):
