@@ -96,6 +96,7 @@ elevation_mapping_node:
     corrected_map_frame: 'odom'                     
     update_variance_fps: 5.0                        # fps for updating variance. 
     update_pose_fps: 0.0                            # fps for updating pose and shift the center of map. Set to 0 to disable.
+    GET_tf_fps: 20.0                                # fps for updating GET tf.
     time_interval: 0.1                              # Time layer is updated with this interval.
     position_lowpass_alpha: 0.2                     # lowpass filter alpha used for detecting movements. 
     orientation_lowpass_alpha: 0.2                  # lowpass filter alpha used for detecting movements. 

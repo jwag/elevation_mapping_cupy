@@ -152,6 +152,7 @@ class ElevationMappingNode(Node):
         self.update_variance_fps = self.get_parameter('update_variance_fps').get_parameter_value().double_value
         self.time_interval = self.get_parameter('time_interval').get_parameter_value().double_value
         self.update_pose_fps = self.get_parameter('update_pose_fps').get_parameter_value().double_value
+        self.GET_tf_fps = self.get_parameter('GET_tf_fps').get_parameter_value().double_value
         # # self.map_acquire_fps = self.get_parameter('map_acquire_fps').get_parameter_value().double_value
         # self.publish_statistics_fps = self.get_parameter('publish_statistics_fps').get_parameter_value().double_value
         # self.enable_pointcloud_publishing = self.get_parameter('enable_pointcloud_publishing').get_parameter_value().bool_value
@@ -253,13 +254,23 @@ class ElevationMappingNode(Node):
                 self._pointcloud_subs[key] = subscription
             elif data_type == "GET":
                 topic_name = config.get("topic_name", "/odom_blade")
-                subscription = self.create_subscription(
+                use_blade_odometry = config.get("use_blade_odometry", True)
+                if use_blade_odometry:
+                    subscription = self.create_subscription(
                     Odometry,
                     topic_name,
                     partial(self.GET_odometry_callback, sub_key=key),
                     10
-                )
-                self._GET_subs[key] = subscription
+                    )
+                    self._GET_subs[key] = subscription
+                else:
+                    # Setup timer callback to get the transform from the tf2 buffer
+                    # Probably bad to shove this in a subs array, but this isn't used so I think its ok for now
+                    self._GET_subs[key] = self.create_timer(
+                        1.0 / self.GET_tf_fps,
+                        partial(self.GET_tf_callback, sub_key=key)
+                    )
+
                 min_max_translation_m = self.param.resolution * np.sqrt(2.0)
                 if config['max_translation_m'] < min_max_translation_m:
                     # This also leads to issues with erosion slipping under the blade
@@ -566,6 +577,72 @@ class ElevationMappingNode(Node):
         # self.get_logger().info(f"Received GET odometry message for {sub_key}")
         self._last_t = msg.header.stamp
         GET_hist = self._GET_subs_history[sub_key]
+        update, GET_curr = GET_hist.check_movement(msg)
+        if update and self.pose_initialized:
+            # self.get_logger().info(f"Processing GET movement for {sub_key}")
+            T_MG0 = GET_hist.get_transform()
+            T_MG1 = GET_curr.get_transform()
+            # Average the variance of the two messages for now
+            var_h = (GET_hist.var_z + GET_curr.var_z) / 2
+            # TODO: provide some sort of interpolation here using tf2
+            # Pull out translation from T_MG0 and T_MG1 and append
+            M_r_MG = np.array([T_MG0[:3, 3], T_MG1[:3, 3]]).astype(np.float32)
+            n_steps = 2
+            dt = GET_curr.stamp_float - GET_hist.stamp_float
+            roll = 0.1 # TODO: could probably more efficiently obtain roll here than the internal implementation
+            FEE_em_params, surf_points_dict, plane_fit_params = self._map.input_GET_movement(
+                GET_ID=sub_key,
+                T_MG0=T_MG0,
+                T_MG1=T_MG1,
+                M_r_MG=M_r_MG,
+                n_steps=n_steps,
+                var_h=var_h,
+                roll=roll
+            )
+            # Update the history with the current message
+            GET_hist.assign_from_instance(GET_curr)
+            # Publish the plane fit
+            self.publish_plane_fit(plane_fit_params)
+
+
+    def odom_msg_from_tf(self, from_frame: str, to_frame: str, stamp: rclpy.time.Time) -> Odometry:
+        # Get the transform from the tf2 buffer
+        transform = self.safe_lookup_transform(from_frame, to_frame, stamp)
+        odom_msg = Odometry()
+        odom_msg.header.frame_id = from_frame
+        odom_msg.child_frame_id = to_frame
+        odom_msg.header.stamp = stamp.to_msg()
+        odom_msg.pose.pose.position.x = transform.transform.translation.x
+        odom_msg.pose.pose.position.y = transform.transform.translation.y
+        odom_msg.pose.pose.position.z = transform.transform.translation.z
+        odom_msg.pose.pose.orientation.x = transform.transform.rotation.x
+        odom_msg.pose.pose.orientation.y = transform.transform.rotation.y
+        odom_msg.pose.pose.orientation.z = transform.transform.rotation.z
+        odom_msg.pose.pose.orientation.w = transform.transform.rotation.w
+        # Don't fill out the twist for now as we aren't currently using it for the check movement
+        odom_msg.twist.twist.linear.x = 0.0
+        odom_msg.twist.twist.linear.y = 0.0
+        odom_msg.twist.twist.linear.z = 0.0
+        odom_msg.twist.twist.angular.x = 0.0
+        odom_msg.twist.twist.angular.y = 0.0
+        odom_msg.twist.twist.angular.z = 0.0
+        return odom_msg
+
+    def GET_tf_callback(self, sub_key: str) -> None:
+        # self.get_logger().info(f"Received GET odometry message for {sub_key}")
+        # Adding a small delay to the last time to avoid tf2 lookup issues
+        delay_seconds = 0.1
+        self._last_t = self.get_clock().now() - rclpy.time.Duration(seconds=delay_seconds)
+        GET_hist = self._GET_subs_history[sub_key]
+        try:
+            msg = self.odom_msg_from_tf(
+                from_frame=self.map_frame,
+                to_frame=GET_hist.GET_config["blade_frame"],
+                stamp=self._last_t
+            )
+        except tf2_ros.LookupException as e:
+            self.get_logger().warn(f"LookupException encountered: {str(e)}")
+            return
         update, GET_curr = GET_hist.check_movement(msg)
         if update and self.pose_initialized:
             # self.get_logger().info(f"Processing GET movement for {sub_key}")
