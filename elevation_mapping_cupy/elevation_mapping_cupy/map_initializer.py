@@ -8,13 +8,12 @@ import cupy as cp
 
 
 class MapInitializer(object):
-    def __init__(self, initial_variance, new_variance, xp=np, method="points"):
+    def __init__(self, initial_variance, xp=np, method="points"):
         self.methods = ["points"]
         assert method in self.methods, "method should be chosen from {}".format(self.methods)
         self.method = method
         self.xp = xp
         self.initial_variance = initial_variance
-        self.new_variance = new_variance
 
     def __call__(self, *args, **kwargs):
         if self.method == "points":
@@ -22,15 +21,18 @@ class MapInitializer(object):
         else:
             return
 
-    def points_initializer(self, elevation_map, points, method="linear"):
+    def points_initializer(self, elevation_map, points, new_variance=None, method="linear"):
         """Initialize the map using interpolation between given points
 
         Args:
             elevation_map (cupy._core.core.ndarray): elevation_map data.
             points (cupy._core.core.ndarray): points used to interpolate.
+            new_variance (float): variance for new points. If None, initial_variance is used.
             method (str): method for interpolation. (nearest, linear, cubic)
 
         """
+        if new_variance is None:
+            new_variance = self.initial_variance
         # points from existing map.
         points_idx = self.xp.where(elevation_map[2] > 0.5)
         values = elevation_map[0, points_idx[0], points_idx[1]]
@@ -56,14 +58,14 @@ class MapInitializer(object):
         # Update elevation map.
         elevation_map[0] = self.xp.nan_to_num(interpolated)
         elevation_map[1] = self.xp.where(
-            self.xp.invert(self.xp.isnan(interpolated)), self.new_variance, self.initial_variance
+            self.xp.invert(self.xp.isnan(interpolated)), new_variance, self.initial_variance
         )
         elevation_map[2] = self.xp.where(self.xp.invert(self.xp.isnan(interpolated)), 1.0, 0.0)
         return
 
 
 if __name__ == "__main__":
-    initializer = MapInitializer(100, 10, method="points", xp=cp)
+    initializer = MapInitializer(100, method="points", xp=cp)
     m = np.zeros((4, 10, 10))
     m[0, 0:5, 2:5] = 0.3
     m[2, 0:5, 2:5] = 1.0
@@ -74,7 +76,7 @@ if __name__ == "__main__":
     points = cp.array([[0, 0, 0.2], [8, 0, 0.2], [6, 9, 0.2]])
     # [3, 3, 0.2]])
     m = cp.asarray(m)
-    initializer(m, points, method="cubic")
+    initializer(m, points, 10, method="cubic")
     print(m[0])
     print(m[1])
     print(m[2])

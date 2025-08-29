@@ -75,15 +75,31 @@ class ElevationMappingNode(Node):
 
         self._map_q = None
         self._map_t = None
-        flat_a_priori = True
-        if flat_a_priori:
-            # Initialize map to have a zero elevaiton everywere
-            corner = self.param.true_map_length/2.0
-            map_z_init = 0.0
-            loose_depth = 0.4
-            init_points = np.array([[corner,-corner,map_z_init], [corner,corner,map_z_init], [-corner,corner,map_z_init], [-corner,-corner,map_z_init]])
-            self._map.initialize_map(init_points, method="linear")
-            self._map.elevation_map[7,:] = loose_depth
+    
+    def initialize_map(self) -> None:
+        if self.use_initializer_at_start:
+            points = np.zeros((0,3))
+            for i, frame_id in enumerate(self.initialize_frame_id):
+                transform = self.safe_lookup_transform(
+                    self.map_frame,
+                    frame_id,
+                    rclpy.time.Time()
+                )
+                t = transform.transform.translation
+                p = np.array([t.x, t.y, t.z])
+                p[2] += self.initialize_tf_offset[i]
+                points = np.vstack((points, p))
+            if points.shape[0] != 0:
+                # Initialize the map with a square grid of points of size initialize_tf_grid_size*2
+                square_pts = np.array([[-1, -1, 0], [1, -1, 0], [1, 1, 0], [-1, 1, 0]]) * self.initialize_tf_grid_size
+                init_points = np.zeros((0, 3))
+                for p in points:
+                    init_points = np.vstack((init_points, square_pts + p))
+                self._map.initialize_map(init_points, new_variance=self.initialized_variance, method=self.initialize_method, dilation_size_initialize=self.dilation_size_initialize) # TODO: Add rosparams for dilation_size_initialize and initialized_variance
+                # Only initialize once at startup
+                self.use_initializer_at_start = False
+            # self._map.elevation_map[7,:] = loose_depth
+
 
     def initialize_ros(self) -> None:
         self._tf_buffer = tf2_ros.Buffer()
@@ -97,12 +113,13 @@ class ElevationMappingNode(Node):
         ''' These are parameters not in the parameter class but are used in the node.
         Commented out parameters are not used in the current python node but are left here for future
         improvemnts as they are used in the C++ node.'''
-        # self.initialize_method = self.get_parameter('initialize_method').get_parameter_value().string_value
-        # self.initialize_frame_id = self.get_parameter('initialize_frame_id').get_parameter_value().string_value
-        # self.initialize_tf_offset = self.get_parameter('initialize_tf_offset').get_parameter_value().double_array_value
-        # self.dialation_size_initial = self.get_parameter('dialation_size_initial').get_parameter_value().integer_value
-        # self.initialize_tf_grid_size = self.get_parameter('initialize_tf_grid_size').get_parameter_value().double_value
-        # self.use_initializer_at_start = self.get_parameter('use_initializer_at_start').get_parameter_value().bool_value
+        self.initialize_method = self.get_parameter('initialize_method').get_parameter_value().string_value
+        self.initialize_frame_id = self.get_parameter('initialize_frame_id').get_parameter_value().string_array_value
+        self.initialize_tf_offset = self.get_parameter('initialize_tf_offset').get_parameter_value().double_array_value
+        self.initialize_tf_grid_size = self.get_parameter('initialize_tf_grid_size').get_parameter_value().double_value
+        self.use_initializer_at_start = self.get_parameter('use_initializer_at_start').get_parameter_value().bool_value
+        self.dilation_size_initialize = self.get_parameter('dilation_size_initialize').get_parameter_value().integer_value
+        self.initialized_variance = self.get_parameter('initialized_variance').get_parameter_value().double_value
         self.map_frame = self.get_parameter('map_frame').get_parameter_value().string_value
         self.base_frame = self.get_parameter('base_frame').get_parameter_value().string_value
         # self.corrected_map_frame = self.get_parameter('corrected_map_frame').get_parameter_value().string_value
@@ -111,7 +128,8 @@ class ElevationMappingNode(Node):
         # self.recordable_fps = self.get_parameter('recordable_fps').get_parameter_value().double_value
         self.update_variance_fps = self.get_parameter('update_variance_fps').get_parameter_value().double_value
         self.time_interval = self.get_parameter('time_interval').get_parameter_value().double_value
-        # self.update_pose_fps = self.get_parameter('update_pose_fps').get_parameter_value().double_value        # self.map_acquire_fps = self.get_parameter('map_acquire_fps').get_parameter_value().double_value
+        # self.update_pose_fps = self.get_parameter('update_pose_fps').get_parameter_value().double_value
+        # # self.map_acquire_fps = self.get_parameter('map_acquire_fps').get_parameter_value().double_value
         # self.publish_statistics_fps = self.get_parameter('publish_statistics_fps').get_parameter_value().double_value
         # self.enable_pointcloud_publishing = self.get_parameter('enable_pointcloud_publishing').get_parameter_value().bool_value
         # self.enable_normal_arrow_publishing = self.get_parameter('enable_normal_arrow_publishing').get_parameter_value().bool_value
@@ -554,6 +572,7 @@ class ElevationMappingNode(Node):
         self._map_t = self._map.get_position()
         self._map_q = q
         self._pose_initizlized = True
+        self.initialize_map()
 
     def update_variance(self) -> None:
         t2 = self.get_clock().now()

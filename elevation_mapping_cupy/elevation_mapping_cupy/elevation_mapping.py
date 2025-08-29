@@ -138,7 +138,7 @@ class ElevationMap:
         plugin_config_file = param.plugin_config_file
         self.plugin_manager.load_plugin_settings(plugin_config_file)
 
-        self.map_initializer = MapInitializer(self.initial_variance, param.initialized_variance, xp=cp, method="points")
+        self.map_initializer = MapInitializer(self.initial_variance, xp=cp, method="points")
     
     def configure_sensors(self, param):
         """Configure the sensor Processors for the elevation map.
@@ -336,9 +336,6 @@ class ElevationMap:
         )
 
         self.dilation_filter_kernel = dilation_filter_kernel(self.cell_n, self.cell_n, self.param.dilation_size)
-        self.dilation_filter_kernel_initializer = dilation_filter_kernel(
-            self.cell_n, self.cell_n, self.param.dilation_size_initialize
-        )
         self.polygon_mask_kernel = polygon_mask_kernel(self.cell_n, self.cell_n, self.resolution)
         self.normal_filter_kernel = normal_filter_kernel(self.cell_n, self.cell_n, self.resolution)
 
@@ -1320,23 +1317,27 @@ class ElevationMap:
         """
         untraversable_polygon[...] = xp.asnumpy(self.untraversable_polygon)
 
-    def initialize_map(self, points, method="cubic"):
+    def initialize_map(self, points, new_variance=None, method="cubic", dilation_size_initialize=2):
         """Initializes the map according to some points and using an approximation according to method.
 
         Args:
-            points (numpy.ndarray):
+            points (numpy.ndarray):   Points used to initialize the map
+            new_variance (float):    The variance to assign to the new region
             method (str): Interpolation method ['linear', 'cubic', 'nearest']
+            dilation_size_initialize (int): Size of the dilation filter kernel
         """
+        # Compile the dialation filter kernel as requested to enable changing the size
+        dilation_filter_kernel_initializer = dilation_filter_kernel(self.cell_n, self.cell_n, dilation_size_initialize)
         self.clear()
         with self.map_lock:
             points = cp.asarray(points, dtype=self.data_type)
             indices = transform_to_map_index(points[:, :2], self.center[:2], self.cell_n, self.resolution)
             points[:, :2] = indices.astype(points.dtype)
             points[:, 2] -= self.center[2]
-            self.map_initializer(self.elevation_map, points, method)
-            if self.param.dilation_size_initialize > 0:
+            self.map_initializer(self.elevation_map, points, new_variance, method)
+            if dilation_size_initialize > 0:
                 for i in range(2):
-                    self.dilation_filter_kernel_initializer(
+                    dilation_filter_kernel_initializer(
                         self.elevation_map[0],
                         self.elevation_map[2],
                         self.elevation_map[0],

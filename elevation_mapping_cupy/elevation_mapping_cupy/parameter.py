@@ -50,8 +50,6 @@ class Parameter(Serializable):
                        (Default: ``1.0``)
         dilation_size: The dilation filter size before traversability filter.  
                        (Default: ``2``)
-        dilation_size_initialize: The dilation size after the init.  
-                                  (Default: ``10``)
         drift_compensation_alpha: The drift compensation alpha for smoother update of drift compensation.  
                                   (Default: ``1.0``)
         traversability_inlier: Cells with higher traversability are used for drift compensation.  
@@ -114,8 +112,6 @@ class Parameter(Serializable):
                      (Default: ``"config/weights.dat"``)
         initial_variance: Initial variance for each cell.  
                           (Default: ``10.0``)
-        initialized_variance: Initialized variance for each cell.  
-                              (Default: ``10.0``)
         w1: Weights for the first layer.  
             (Default: ``np.zeros((4, 1, 3, 3))``)
         w2: Weights for the second layer.  
@@ -174,6 +170,9 @@ class Parameter(Serializable):
                                               (Default: ``1.0``)
         min_soil_prop_marking_dist: Minimum distance for marking soil properties.  
                                     (Default: ``0.3``)
+        mgmt_params: Parameters used to control the management of the use of base ElevationMap class. In ROS these configure the node behavior.
+                     Any parameters loaded in the YAML file that are not in the Parameter class will be put into this dictionary.
+                     (Default: ``{}``)
     """
     resolution: float = 0.04  # resolution in m.
     subscriber_cfg: dict = field(
@@ -223,7 +222,6 @@ class Parameter(Serializable):
 
     max_variance: float = 1.0  # maximum variance for each cell.
     dilation_size: int = 2  # dilation filter size before traversability filter.
-    dilation_size_initialize: int = 10  # dilation size after the init.
     drift_compensation_alpha: float = 1.0  # drift compensation alpha for smoother update of drift compensation.
 
     traversability_inlier: float = 0.1  # cells with higher traversability are used for drift compensation.
@@ -263,7 +261,6 @@ class Parameter(Serializable):
     weight_file: str = "config/weights.dat"  # weight file for traversability filter
 
     initial_variance: float = 10.0  # initial variance for each cell.
-    initialized_variance: float = 10.0  # initialized variance for each cell.
     w1: np.ndarray = field(default_factory=lambda: np.zeros((4, 1, 3, 3)))  # weights for the first layer
     w2: np.ndarray = field(default_factory=lambda: np.zeros((4, 1, 3, 3)))  # weights for the second layer
     w3: np.ndarray = field(default_factory=lambda: np.zeros((4, 1, 3, 3)))  # weights for the third layer
@@ -301,6 +298,8 @@ class Parameter(Serializable):
     true_map_length: float = None  # true length of the map
     cell_n: int = None  # number of cells in the map
     true_cell_n: int = None  # true number of cells in the map
+
+    mgmt_params: dict = field(default_factory=dict)  # parameters used to control the management of the use of base ElevationMap class. In ROS these configure the node behavior.
 
     def load_weights(self, filename: str):
         """
@@ -377,7 +376,8 @@ class Parameter(Serializable):
                 key = "subscriber_cfg"
                 setattr(self, key, value)
             else:
-                print(f"Key {key} not found in parameter class")
+                print(f"Key {key} not found in parameter class. Adding to mgmt_params.")
+                self.mgmt_params[key] = value
 
 
 if __name__ == "__main__":
