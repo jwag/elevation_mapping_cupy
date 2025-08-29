@@ -9,7 +9,7 @@ import cupy as cp
 
 class MapInitializer(object):
     def __init__(self, initial_variance, xp=np, method="points"):
-        self.methods = ["points"]
+        self.methods = ["points", "heightmap"]
         assert method in self.methods, "method should be chosen from {}".format(self.methods)
         self.method = method
         self.xp = xp
@@ -18,6 +18,8 @@ class MapInitializer(object):
     def __call__(self, *args, **kwargs):
         if self.method == "points":
             self.points_initializer(*args, **kwargs)
+        elif self.method == "heightmap":
+            self.heightmap_initializer(*args, **kwargs)
         else:
             return
 
@@ -63,20 +65,35 @@ class MapInitializer(object):
         elevation_map[2] = self.xp.where(self.xp.invert(self.xp.isnan(interpolated)), 1.0, 0.0)
         return
 
+    def heightmap_initializer(self, elevation_map, heightmap, new_variance=None):
+        """Initialize the map using a heightmap
+
+        Args:
+            elevation_map (cupy._core.core.ndarray): elevation_map data.
+            heightmap (cupy._core.core.ndarray): heightmap data to initialize the elevation map.
+            new_variance (float): variance for new points. If None, initial_variance is used.
+
+        """
+        if new_variance is None:
+            new_variance = self.initial_variance
+
+        # Ensure heightmap dimensions match the inner dimensions of the elevation map (excluding borders)
+        inner_shape = (elevation_map.shape[1] - 2, elevation_map.shape[2] - 2)
+        assert heightmap.shape == inner_shape, "Heightmap dimensions must match the inner dimensions of the elevation map (excluding borders)."
+
+        # Update elevation map
+        elevation_map[0,1:-1,1:-1] = heightmap
+        elevation_map[1,1:-1,1:-1] = self.xp.full_like(heightmap, new_variance)
+        elevation_map[2,1:-1,1:-1] = self.xp.ones_like(heightmap)
+        return
+
 
 if __name__ == "__main__":
-    initializer = MapInitializer(100, method="points", xp=cp)
+    initializer = MapInitializer(100, method="heightmap", xp=cp)
     m = np.zeros((4, 10, 10))
-    m[0, 0:5, 2:5] = 0.3
-    m[2, 0:5, 2:5] = 1.0
-    np.set_printoptions(threshold=100)
-    print(m[0])
-    print(m[1])
-    print(m[2])
-    points = cp.array([[0, 0, 0.2], [8, 0, 0.2], [6, 9, 0.2]])
-    # [3, 3, 0.2]])
+    heightmap = cp.array([[0.1 * i for i in range(10)] for j in range(10)])
     m = cp.asarray(m)
-    initializer(m, points, 10, method="cubic")
+    initializer(m, heightmap, new_variance=50)
     print(m[0])
     print(m[1])
     print(m[2])
