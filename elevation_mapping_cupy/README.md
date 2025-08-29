@@ -14,6 +14,7 @@ ros2 run rmw_zenoh_cpp rmw_zenohd
 
 Now launch the turtlebot3 in Gazebo with the following command:
 ```bash
+source /usr/share/gazebo/setup.bash
 ros2 launch turtlebot3_gazebo turtlebot3_world.launch.py
 ``` 
 

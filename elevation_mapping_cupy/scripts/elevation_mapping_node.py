@@ -1,30 +1,28 @@
 #!/usr/bin/env python3
-import numpy as np
-import os
 from functools import partial
-
+from collections import deque
+import threading
 import rclpy
+from rclpy.time import Time
 from rclpy.node import Node
+from rclpy.duration import Duration
 from rclpy.qos import QoSPresetProfiles
-from rclpy.qos import QoSProfile, DurabilityPolicy, HistoryPolicy, ReliabilityPolicy
-from ament_index_python.packages import get_package_share_directory
+# from rclpy.qos import QoSProfile, DurabilityPolicy, HistoryPolicy, ReliabilityPolicy
 import ros2_numpy as rnp
 from sensor_msgs.msg import PointCloud2, Image, CameraInfo
 from nav_msgs.msg import Odometry
-from sensor_msgs_py import point_cloud2
-from tf_transformations import quaternion_matrix, quaternion_conjugate, quaternion_multiply, quaternion_about_axis, euler_from_quaternion, quaternion_from_euler
+from tf_transformations import quaternion_matrix, quaternion_conjugate, quaternion_multiply, euler_from_quaternion, quaternion_from_euler
 import tf2_ros
 import message_filters
 from cv_bridge import CvBridge
-from rclpy.duration import Duration
 from grid_map_msgs.msg import GridMap
 from std_msgs.msg import Float32MultiArray
 from std_msgs.msg import MultiArrayLayout as MAL
 from std_msgs.msg import MultiArrayDimension as MAD
 from shape_msgs.msg import Plane
 from geometry_msgs.msg import PolygonStamped, Point32
-from rclpy.serialization import serialize_message
 from elevation_mapping_cupy import ElevationMap, Parameter
+import numpy as np
 
 PDC_DATATYPE = {
     "1": np.int8,
@@ -68,6 +66,22 @@ class ElevationMappingNode(Node):
         self._last_t = None
         self.tf_offset = rclpy.time.Duration(seconds=0.2)
 
+        # Timer to process buffered messages
+        # TODO: Make this a parameter
+        self.timer = self.create_timer(0.1, self.process_queues)
+
+        # Queues for buffering messages
+        self.pointcloud_queue_max_size = 100
+        self.image_queue_max_size = 100
+        self.pointcloud_queue_max_age = Duration(seconds=0.5)
+        self.image_queue_max_age = Duration(seconds=0.5)
+        self.pointcloud_queue = deque()
+        self.pointcloud_sub_key_queue = deque()
+        self.image_queue = deque()
+        self.image_sub_key_queue = deque()
+        self.camera_info_queue = deque()
+        self.msg_filter_lock = threading.Lock()
+
     def initialize_elevation_mapping(self) -> None:
         self._pointcloud_process_counter = 0
         self._image_process_counter = 0
@@ -79,6 +93,116 @@ class ElevationMappingNode(Node):
 
         self.pose_initialized = False
         self._map_t = None
+    
+
+    def process_queues(self):
+        self.get_logger().info("Starting Processing queues")
+        current_time = self.get_clock().now()
+
+        # Take a quick snapshot
+        with self.msg_filter_lock:
+            pointcloud_queue = list(self.pointcloud_queue)
+            pointcloud_sub_key_queue = list(self.pointcloud_sub_key_queue)
+            self.pointcloud_queue.clear()
+            self.pointcloud_sub_key_queue.clear()
+
+        # Now work on the local copy without locks
+        new_pointcloud_queue = []
+        new_pointcloud_sub_key_queue = []
+
+        for msg, sub_key in zip(pointcloud_queue, pointcloud_sub_key_queue):
+            msg_time = Time.from_msg(msg.header.stamp)
+            age = current_time - msg_time
+
+            if age > self.pointcloud_queue_max_age:
+                self.get_logger().warn(f"Pointcloud message is too old. Dropping oldest message. Age: {age}")
+                self.get_logger().warn(f"Pointcloud queue size: {len(pointcloud_queue)}")
+                continue
+
+            if self.try_process_pointcloud(msg, sub_key):
+                self.get_logger().info("Successfully processed pointcloud message.")
+                continue  # Message processed successfully
+            else:
+                # Couldn't process, put it back for next time
+                new_pointcloud_queue.append(msg)
+                new_pointcloud_sub_key_queue.append(sub_key)
+                break  # Assume we should wait for the transform before going further
+
+        # If any unprocessed messages, put them back quickly
+        if new_pointcloud_queue:
+            self.get_logger().info(f"Re-adding {len(new_pointcloud_queue)} unprocessed pointcloud messages to the front of the queue.")
+            with self.msg_filter_lock:
+                # Prepend unprocessed ones to the front
+                self.pointcloud_queue.extendleft(reversed(new_pointcloud_queue))
+                self.pointcloud_sub_key_queue.extendleft(reversed(new_pointcloud_sub_key_queue))
+                
+            # # Process Image messages
+            # while len(self.image_queue) > self.image_queue_max_size:
+            #     self.image_queue.popleft()
+            #     self.image_sub_key_queue.popleft()
+            #     self.camera_info_queue.popleft()
+
+            # while self.image_queue and (current_time - self.image_queue[0].header.stamp) > self.image_queue_max_age:
+            #     self.image_queue.popleft()
+            #     self.image_sub_key_queue.popleft()
+            #     self.camera_info_queue.popleft()
+
+            # for _ in range(len(self.image_queue)):
+            #     msg = self.image_queue.popleft()
+            #     camera_info_msg = self.camera_info_queue.popleft()
+            #     sub_key = self.image_sub_key_queue.popleft()
+            #     if self.handle_image(msg, camera_info_msg, sub_key):
+            #         continue
+            #     self.image_queue.appendleft(msg)
+            #     self.camera_info_queue.appendleft(camera_info_msg)
+            #     self.image_sub_key_queue.appendleft(sub_key)
+            #     break  # Wait for transform to become available
+        self.get_logger().info("Finished Processing queues")
+
+    def try_process_pointcloud(self, msg: PointCloud2, sub_key: str) -> bool:
+        frame_sensor_id = msg.header.frame_id
+        # First get the base to sensor transform if it hasn't been set yet
+        # This currently assumes the transform is fixed
+        if not self._map.sensor_processors[sub_key].BS_transform_set:
+            transform_base_to_sensor, error_msg = self.try_transform(
+                self.base_frame,
+                frame_sensor_id,
+                msg.header.stamp
+            )
+            if transform_base_to_sensor is None:
+                self.get_logger().warn(f"PointCloud callback Base to Sensor: {error_msg}")
+                return False
+            t = transform_base_to_sensor.transform.translation
+            q = transform_base_to_sensor.transform.rotation
+            B_r_BS = np.array([t.x, t.y, t.z], dtype=np.float32)
+            C_BS = quaternion_matrix([q.x, q.y, q.z, q.w])[:3, :3].astype(np.float32)
+            # Set the transform
+            self._map.sensor_processors[sub_key].set_BS_transform(C_BS, B_r_BS)
+        # Now get the transform from the map to the base
+        transform_map_to_base, error_msg = self.try_transform(
+            self.map_frame,
+            self.base_frame,
+            msg.header.stamp
+        )
+        if transform_map_to_base is None:
+            self.get_logger().warn(f"PointCloud callback: {error_msg}")
+            return False
+        # Now we can actually process the pointcloud
+        self.handle_pointcloud(msg, sub_key, transform_map_to_base)
+
+        return True
+
+    def try_transform(self, target_frame, source_frame, lookup_time):
+        try:
+            transform = self._tf_buffer.lookup_transform(
+                target_frame,
+                source_frame,
+                lookup_time,
+                timeout=Duration(seconds=0.01)
+            )
+            return transform, None
+        except tf2_ros.ExtrapolationException as e:
+            return None, e
     
     def initialize_map(self) -> None:
         """Initialize the map with a square grid of points of size initialize_tf_grid_size*2 around
@@ -379,6 +503,12 @@ class ElevationMappingNode(Node):
             )
 
     def image_callback(self, camera_msg: Image, camera_info_msg: CameraInfo, sub_key: str) -> None:
+        with self.msg_filter_lock:
+            self.image_queue.append(camera_msg)
+            self.camera_info_queue.append(camera_info_msg)
+            self.image_sub_key_queue.append(sub_key)
+    
+    def handle_image(self, camera_msg: Image, camera_info_msg: CameraInfo, sub_key: str) -> None:
         self._last_t = camera_msg.header.stamp
         try:
             semantic_img = self.cv_bridge.imgmsg_to_cv2(camera_msg, desired_encoding="passthrough")
@@ -433,6 +563,11 @@ class ElevationMappingNode(Node):
 
 
     def pointcloud_callback(self, msg: PointCloud2, sub_key: str) -> None:
+        with self.msg_filter_lock:
+            self.pointcloud_queue.append(msg)
+            self.pointcloud_sub_key_queue.append(sub_key)
+    
+    def handle_pointcloud(self, msg: PointCloud2, sub_key: str, transform_map_to_base) -> None:
         self._last_t = msg.header.stamp
         # self.get_logger().info(f"Received pointcloud with {msg.width} points")
         additional_channels = self.param.subscriber_cfg[sub_key].get("channels", [])
@@ -444,27 +579,6 @@ class ElevationMappingNode(Node):
         # if points['xyz'].size == 0:
         if points['x'].size == 0:
             return
-        frame_sensor_id = msg.header.frame_id
-        # First get the base to sensor transform if it hasn't been set yet
-        # This currently assumes the transform is fixed
-        if not self._map.sensor_processors[sub_key].BS_transform_set:
-            transform_base_to_sensor = self.safe_lookup_transform(
-                self.base_frame,
-                frame_sensor_id,
-                msg.header.stamp
-            )
-            t = transform_base_to_sensor.transform.translation
-            q = transform_base_to_sensor.transform.rotation
-            B_r_BS = np.array([t.x, t.y, t.z], dtype=np.float32)
-            C_BS = quaternion_matrix([q.x, q.y, q.z, q.w])[:3, :3].astype(np.float32)
-            # Set the transform
-            self._map.sensor_processors[sub_key].set_BS_transform(C_BS, B_r_BS)
-        # Now get the transform from the map to the base
-        transform_map_to_base = self.safe_lookup_transform(
-            self.map_frame,
-            self.base_frame,
-            msg.header.stamp
-        )
         t = transform_map_to_base.transform.translation
         q = transform_map_to_base.transform.rotation
         B_r_MB = np.array([t.x, t.y, t.z], dtype=np.float32)
@@ -725,7 +839,7 @@ class ElevationMappingNode(Node):
             self.pose_initialized = True
         # If pose_fps is 0.0, then we only want to use the pose update to initialize the map
         elif (not self.pose_initialized) or (self.update_pose_fps > 0.0):
-            self.get_logger().info("Updating pose")
+            # self.get_logger().info("Updating pose")
             # Don't update the pose if we haven't received any data yet unless we are initializing the map
             if self._last_t is None and self.pose_initialized:
                 pass
