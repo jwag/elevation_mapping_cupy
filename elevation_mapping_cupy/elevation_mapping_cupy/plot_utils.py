@@ -191,7 +191,7 @@ def surf_elev_map_plot(elev, layer_color, layer_color_name, cell_n, resolution, 
    ax.set_box_aspect([xrange, yrange, z_scale*zrange])
 
 # TODO: Add plot to show loose soil on top of the elevation map
-def bar_elev_map_plot(elev, elev_name, layer_color, layer_color_name, true_cell_n, resolution, offset, colormap='Spectral', scale_mode="z_fit", layer_color_rng=[None,None], layer_truth_str=None):
+def bar_elev_map_plot(elev, title, layer_color, colorbar_label, crop_mask, true_cell_n, resolution, offset, colormap='Spectral', scale_mode="z_fit", layer_color_rng=[None,None], layer_truth_str=None):
       """
       Plot a 3D bar plot of the elevation map. Colors are determined by the layer_color map
       which could be variance, or some other value. This plot is not interpolated and shows the
@@ -229,6 +229,8 @@ def bar_elev_map_plot(elev, elev_name, layer_color, layer_color_name, true_cell_
 
       # Set values that are nan in the elevation map to be nan in the layer_color map
       valid = ~np.isnan(dz)
+      # Add in crop mask
+      valid = valid & crop_mask
       layer_color[~valid] = np.nan
       # Get the colormap and normalize the layer_color values
       if layer_color_rng[0] is None:
@@ -244,25 +246,28 @@ def bar_elev_map_plot(elev, elev_name, layer_color, layer_color_name, true_cell_
       fig, ax = plt.subplots(subplot_kw=dict(projection='3d'))
       ax.bar3d(x[valid].ravel(), y[valid].ravel(), bottom[valid].ravel(), resolution, resolution, dz[valid].ravel(),
                shade=False, color=rgba.reshape(-1, 4), edgecolor='white', linewidth=0.1)
-
-      # add colorboar
+      # add colorbar
       mappable = cm.ScalarMappable(norm=norm, cmap=cmap)
       mappable.set_array(layer_color[valid])
-      fig.colorbar(mappable, ax=ax, shrink=0.5)
-      title  = elev_name + ' Map with ' + layer_color_name + ' Color'
+      fig.colorbar(mappable, ax=ax, shrink=0.5, label=colorbar_label)
+      # title  = elev_name + ' Map with ' + layer_color_name + ' Color'
       if layer_truth_str is not None:
          title += ' with true value ' + layer_truth_str
       ax.set_title(title)
       ax.set_xlabel('x [m]')
       ax.set_ylabel('y [m]')
-      ax.set_zlabel('z [m]')
-      
+      # ax.set_zlabel('z [m]')
+
+      # Remove grid in z direction
+      # ax.zaxis._axinfo['grid'].update(color = (1,1,1,0))
+      ax.zaxis.pane.fill = False
+      ax.zaxis.pane.set_edgecolor('white')
+
       # Control the aspect ratio and ranges of the plot
-      v = ~np.isnan(dz)
-      xmin = np.min(x[v])
-      xmax = np.max(x[v]) + resolution
-      ymin = np.min(y[v])
-      ymax = np.max(y[v]) + resolution
+      xmin = np.min(x[valid])
+      xmax = np.max(x[valid]) + resolution
+      ymin = np.min(y[valid])
+      ymax = np.max(y[valid]) + resolution
       zmin = np.nanmin(elev)
       zmax = np.nanmax(elev)
       xrange = xmax - xmin
@@ -276,6 +281,9 @@ def bar_elev_map_plot(elev, elev_name, layer_color, layer_color_name, true_cell_
       elif scale_mode == "equal":
          z_scale = 1.0
       ax.set_box_aspect([xrange, yrange, z_scale*zrange])
+      ax.grid(False)
+      ax.set_axis_off()
+      debug = 1
 
 if __name__ == '__main__':
    # Generate Test Map
