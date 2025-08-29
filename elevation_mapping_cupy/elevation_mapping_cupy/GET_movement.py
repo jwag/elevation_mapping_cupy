@@ -1364,6 +1364,14 @@ class GETMovement:
         c = N[2]
         d = -N[0]*C[0] - N[1]*C[1] - N[2]*C[2]
 
+        # If I want to accomodate drift offset in the z then shift the C[2] point coordinates
+        # N[0](x-C[0]) + N[1](y-C[1]) + N[2](z-C[2]+O) = 0
+        # a_o = a
+        # b_o = b
+        # c_o = c
+        # d_o = -N[0]*C[0] - N[1]*C[1] - N[2]*(C[2]+O)
+        # d_o = d - N[2]*O = d - c*O
+
         # Plane fit here is in map coordinates not map origin coordinates. Decide if that is what we want
         return {"M_r_MP": C, "P_normal": N, "coeffs": np.array([a, b, c, d]), "points": points_M_proj,
                 "G_r_GC0": self.cutting_edge_origin, "G_r_C0C1": self.cutting_edge_vector,

@@ -23,6 +23,7 @@ from shape_msgs.msg import Plane
 from geometry_msgs.msg import PolygonStamped, Point32
 from elevation_mapping_cupy import ElevationMap, Parameter
 import numpy as np
+import copy
 
 PDC_DATATYPE = {
     "1": np.int8,
@@ -64,6 +65,8 @@ class ElevationMappingNode(Node):
         self.register_publishers()
         self.register_timers()
         self._last_t = None
+        self.drift_offset = 0.0
+        self.plane_fit_params = None
         
 
         # Queues for buffering messages
@@ -607,7 +610,7 @@ class ElevationMappingNode(Node):
         # Adding static noise value for now to trigger alignment
         Sigma_b_r_MB = np.zeros((3, 3), dtype=np.float32)
         Sigma_b_r_MB[2, 2] = 0.1
-        self._map.input_pointcloud(sensor_ID=sub_key,
+        self.drift_offset += self._map.input_pointcloud(sensor_ID=sub_key,
                                    raw_points=pts,
                                    channels=channels,
                                    C_MB=C_MB, B_r_MB=B_r_MB,
@@ -745,7 +748,7 @@ class ElevationMappingNode(Node):
             n_steps = 2
             dt = GET_curr.stamp_float - GET_hist.stamp_float
             roll = 0.1 # TODO: could probably more efficiently obtain roll here than the internal implementation
-            FEE_em_params, surf_points_dict, plane_fit_params = self._map.input_GET_movement(
+            FEE_em_params, surf_points_dict, self.plane_fit_params = self._map.input_GET_movement(
                 GET_ID=sub_key,
                 T_MG0=T_MG0,
                 T_MG1=T_MG1,
@@ -756,8 +759,9 @@ class ElevationMappingNode(Node):
             )
             # Update the history with the current message
             GET_hist.assign_from_instance(GET_curr)
+        if self.plane_fit_params is not None:
             # Publish the plane fit
-            self.publish_plane_fit(plane_fit_params)
+            self.publish_plane_fit()
 
 
     def odom_msg_from_tf(self, from_frame: str, to_frame: str, stamp: rclpy.time.Time) -> Odometry:
@@ -828,7 +832,7 @@ class ElevationMappingNode(Node):
             n_steps = 2
             dt = GET_curr.stamp_float - GET_hist.stamp_float
             roll = 0.1 # TODO: could probably more efficiently obtain roll here than the internal implementation
-            FEE_em_params, surf_points_dict, plane_fit_params = self._map.input_GET_movement(
+            FEE_em_params, surf_points_dict, self.plane_fit_params = self._map.input_GET_movement(
                 GET_ID=sub_key,
                 T_MG0=T_MG0,
                 T_MG1=T_MG1,
@@ -839,14 +843,21 @@ class ElevationMappingNode(Node):
             )
             # Update the history with the current message
             GET_hist.assign_from_instance(GET_curr)
+        if self.plane_fit_params is not None:
             # Publish the plane fit
-            self.publish_plane_fit(plane_fit_params)
+            self.publish_plane_fit()
     
-    def publish_plane_fit(self, plane_fit_params: dict) -> None:
+    def publish_plane_fit(self)-> None:
+        # First obtain plane fit offset local copy
+        # should probably do this with a lock
+        drift_offset = copy.copy(self.drift_offset)
         # Publish shape_msgs/Plane message
         # Note: These are in map frame
         plane_msg = Plane()
-        coeffs = plane_fit_params["coeffs"] # a, b, c, d
+        # Apply offset to plane fit params
+        # Shift the plane by the drift_offset d_O = d - c * drift_offset
+        self.plane_fit_params["coeffs"][3] -= self.plane_fit_params["coeffs"][2] * drift_offset
+        coeffs = copy.copy(self.plane_fit_params["coeffs"])# a, b, c, d
         plane_msg.coef = coeffs.tolist()
 
         self.plane_publisher.publish(plane_msg)
@@ -855,12 +866,20 @@ class ElevationMappingNode(Node):
         polygon_msg = PolygonStamped()
         polygon_msg.header.frame_id = self.map_frame
         polygon_msg.header.stamp = self.get_clock().now().to_msg()
-        for point in plane_fit_params["points"]:
+        for i, point in enumerate(self.plane_fit_params["points"]):
             pt = Point32()
             pt.x, pt.y, pt.z = point
+            # Shift the point by the drift_offset
+            pt.z += float(drift_offset)
+            # Apply the offset to the params stored in the class
+            self.plane_fit_params["points"][i][2] = pt.z
             polygon_msg.polygon.points.append(pt)
 
         self.polygon_publisher.publish(polygon_msg)
+
+        # Reset the drift offset
+        # will be zero most times, but could have changed if this is asynchronous
+        self.drift_offset -= drift_offset
 
     def pose_update(self) -> None:
         if not self.pose_initialized and self.update_pose_fps <= 0.0:
@@ -917,9 +936,9 @@ class ElevationMappingNode(Node):
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = ElevationMappingNode()
-    # executor = rclpy.executors.SingleThreadedExecutor()
+    executor = rclpy.executors.SingleThreadedExecutor()
     # Fixes tf extrapolation issues in sim right now
-    executor = rclpy.executors.MultiThreadedExecutor()
+    # executor = rclpy.executors.MultiThreadedExecutor()
     executor.add_node(node)
     try:
         executor.spin()

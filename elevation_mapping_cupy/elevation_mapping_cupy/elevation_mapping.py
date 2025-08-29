@@ -405,6 +405,7 @@ class ElevationMap:
                                                         as fixed-axis(extrinsic) xyz(roll, pitch, yaw) Euler angles.
         """
         self.new_map *= 0.0
+        drift_offset = 0.0
         error = cp.array([0.0], dtype=cp.float32)
         error_cnt = cp.array([0], dtype=cp.float32)
         points = points_all[:, :3]
@@ -450,11 +451,12 @@ class ElevationMap:
                 self.mean_error = error / error_cnt
                 self.additive_mean_error += self.mean_error
                 if np.abs(self.mean_error) < self.param.max_drift:
-                    self.elevation_map[0] += self.mean_error * self.param.drift_compensation_alpha
+                    drift_offset = self.mean_error * self.param.drift_compensation_alpha
+                    self.elevation_map[0] += drift_offset
                     # also add the drift to the upper bound
-                    self.elevation_map[5] += self.mean_error * self.param.drift_compensation_alpha
+                    self.elevation_map[5] += drift_offset
                     # also add to elevation reference
-                    self.elevation_map[8] += self.mean_error * self.param.drift_compensation_alpha
+                    self.elevation_map[8] += drift_offset
             # Compute the vertical variance for the sensor using uncertainty propagation for the sensor
             var_h = self.sensor_processors[sensor_ID].get_z_variance(points, C_MB, B_r_MB, Sigma_Theta_MB, Sigma_b_r_MB)
             self.add_points_kernel(
@@ -495,6 +497,7 @@ class ElevationMap:
 
         # Log final state
         self.update_normal(self.traversability_input)
+        return drift_offset
 
     def clear_overlap_map(self, t):
         """Clear overlapping areas around the map center.
@@ -888,7 +891,7 @@ class ElevationMap:
                 
         additional_channels = channels[3:]
         raw_points = raw_points[~cp.isnan(raw_points[:, :3]).any(axis=1)]
-        self.update_map_with_kernel(
+        drift_offset = self.update_map_with_kernel(
             sensor_ID,
             raw_points,
             additional_channels,
@@ -897,6 +900,7 @@ class ElevationMap:
             cp.asarray(Sigma_b_r_MB, dtype=self.data_type),
             cp.asarray(Sigma_Theta_MB, dtype=self.data_type),
         )
+        return drift_offset
 
     def input_image(
         self,
