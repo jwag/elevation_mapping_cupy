@@ -130,6 +130,8 @@ class Parameter(Serializable):
                     ( Default: ``5``)
         plane_fit_ROI_length: Length of the rectangular region of interest for plane fitting in meters. Width is determined by the blade width.
                             (Default: ``5.0``)
+        plane_fit_ROI_width: Width of the rectangular region of interest for plane fitting in meters.
+                            (Default: ``5.0``)
         move_dir_normal_weight: Weight for the normal direction of movement in GET update.
                                 (Default: ``0.5``)
         swell_factor: Swell factor for the soil. Set to 1 for no swell of GET disturbed soil.
@@ -272,7 +274,8 @@ class Parameter(Serializable):
 
     # GET Movement parameters
     elevation_reference_update_radius: float = 5.0  # Radius in meters around the GET outside of which the elevation reference will be updated.
-    plane_fit_ROI_length: float = 5.0  # Length of the rectangular region of interest for plane fitting in meters. Width is determined by the blade width.
+    plane_fit_ROI_length: float = 5.0  # Length of the rectangular region of interest for plane fitting in meters.
+    plane_fit_ROI_width: float = 5.0  # Width of the rectangular region of interest for plane fitting in meters.
     move_dir_normal_weight: float = 0.5  # Weight for the normal direction of movement in GET update.
     swell_factor: float = 1.0  # Swell factor for the soil. Set to 1 for no swell of GET disturbed soil.
     spill_factor: float = 0.0  # Proportion of loose material moved during a sweep that is spilled.

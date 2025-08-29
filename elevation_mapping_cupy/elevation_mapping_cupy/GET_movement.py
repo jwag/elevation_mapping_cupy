@@ -1252,7 +1252,7 @@ class GETMovement:
                 break
         return edge_inds, edge_heights
     
-    def fit_plane_near_GET(self, elevation_map, T_OG, normal, map_center, cell_n, resolution, fit_dir, ROI_length, height_layer_name='elevation'):
+    def fit_plane_near_GET(self, elevation_map, T_OG, normal, map_center, cell_n, resolution, fit_dir, ROI_length, ROI_width, height_layer_name='elevation'):
         """Fit a plane to a surface layer of the elevation map in the direction of blade movement.
 
         This can be used as a reference for a blade controller
@@ -1265,6 +1265,8 @@ class GETMovement:
             cell_n (int):                   The number of cells in the map
             resolution (float):             The resolution of the map
             fit_dir (int):                  The direction to fit the plane in. 1 for forward, 0 for centered, -1 for negative
+            ROI_length (float):             The length of the region of interest in the direction of the fit
+            ROI_width (float):              The width of the region of interest in the direction perpendicular to the fit
             height_layer_name (str):        The name of the layer in the elevation map to fit the plane to.
 
         Returns:
@@ -1279,8 +1281,13 @@ class GETMovement:
         # Then use the polgon bounds to find the inidicies of the map to check for being within the region using the contains function
         # Then fit a plane to those points
         # Use the cutting edge origin and vector to find the cutting edge in the map origin frame
-        br_pos = T_OG[:3,:3] @ self.cutting_edge_origin + T_OG[:3,3]
-        bl_pos = T_OG[:3,:3] @ (self.cutting_edge_origin + self.cutting_edge_vector) + T_OG[:3,3]
+        # br_pos = T_OG[:3,:3] @ self.cutting_edge_origin + T_OG[:3,3]
+        # bl_pos = T_OG[:3,:3] @ (self.cutting_edge_origin + self.cutting_edge_vector) + T_OG[:3,3]
+        bc_G = self.cutting_edge_origin + self.cutting_edge_vector/2.0
+        cutting_edge_norm = self.cutting_edge_vector/np.linalg.norm(self.cutting_edge_vector)
+        # use the ROI_width to find the left and right positions
+        br_pos = T_OG[:3,:3] @ (bc_G - cutting_edge_norm* ROI_width/2.0) + T_OG[:3,3]
+        bl_pos = T_OG[:3,:3] @ (bc_G + cutting_edge_norm* ROI_width/2.0) + T_OG[:3,3]
         nxy = np.array([normal[0], normal[1]])/np.linalg.norm(normal[0:2])
         # Now construct the ROI polygon depending on the fit_dir
         if fit_dir == 1:
@@ -2382,6 +2389,7 @@ class GETMovement:
         fit_dir = 0
         plane_fit_params = self.fit_plane_near_GET(elevation_map, T_OG1, normal_G1, map_center, cell_n, resolution, fit_dir,
                                                    ROI_length=self.param.plane_fit_ROI_length,
+                                                   ROI_width=self.param.plane_fit_ROI_width,
                                                    height_layer_name='elevation_reference')
 
         # Check that the translation is in the direction of the normal when we don't have a self intersection
