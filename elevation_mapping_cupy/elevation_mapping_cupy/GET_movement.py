@@ -1036,8 +1036,8 @@ class GETMovement:
         if cell_n is odd, but at a cell corner if cell_n is even. This means that the indices
         need to be rounded differently depending on the resolution and the cell_n.
         Args:
-            points (np.ndarray) (n,3):          The points in the map frame
-            center (np.ndarray) (3,):           The center of the map in the map frame
+            points (np.ndarray) (n,2 or 3):          The points in the map frame
+            center (np.ndarray) (2 or 3,):           The center of the map in the map frame
             cell_n (int):                       The number of cells in the map
             resolution (float):                 The resolution of the map
             round_dir (str):                    The direction to round the indices. Default is None
@@ -1047,7 +1047,12 @@ class GETMovement:
             indices (np.ndarray) (n,2):         The indices of the points in the map (rounded down)
             points_centered (np.ndarray) (n,3): The points represented in the map origin frame
         """
-        points_centered = points - center.reshape(1, 3)
+        pd = points.shape[1]
+        if center is None:
+            center = np.zeros((1,pd))
+            points_centered = points
+        else: # Make sure center is the right shape
+            points_centered = points - center.reshape(1, pd)
         # Get the indices of the points in the map
         inds = (points_centered[:,0:2] / resolution + cell_n / 2.0)
         if round_dir is None:
@@ -1213,6 +1218,78 @@ class GETMovement:
                 break
         return edge_inds, edge_heights
     
+    def fit_plane_near_GET(self, elevation_map, T_OG, normal, map_center, cell_n, resolution, fit_dir, height_layer_ind=0):
+        """
+        Fit a plane to a surface layer of the elevation map in the direction of blade movement.
+        This can be used as a reference for a blade controller
+
+        Let T_MG be the transform to the GET at the end of the sweep. 
+        fit_dir should be the direction from the blade that we want to fit points to (1 for forward, 0 for centered, -1 for negative)
+        """
+        # Construct ROI as shapely polygon
+        # Then use the polgon bounds to find the inidicies of the map to check for being within the region using the contains function
+        # Then fit a plane to those points
+        # Use the cutting edge origin and vector to find the cutting edge in the map origin frame
+        br_pos = T_OG[:3,:3] @ self.cutting_edge_origin + T_OG[:3,3]
+        bl_pos = T_OG[:3,:3] @ (self.cutting_edge_origin + self.cutting_edge_vector) + T_OG[:3,3]
+        nxy = np.array([normal[0], normal[1]])/np.linalg.norm(normal[0:2])
+        plane_fit_ROI_length = 0.5 # meters
+        # Now construct the ROI polygon depending on the fit_dir
+        if fit_dir == 1:
+            # Fit plane to region in front of the blade
+            p0 = br_pos[:2]
+            p1 = bl_pos[:2]
+            p2 = bl_pos[:2] + nxy * plane_fit_ROI_length
+            p3 = br_pos[:2] + nxy * plane_fit_ROI_length
+        elif fit_dir == 0:
+            # Fit plane to region around the blade
+            p0 = br_pos[:2] - nxy * (plane_fit_ROI_length / 2.0)
+            p1 = bl_pos[:2] - nxy * (plane_fit_ROI_length / 2.0)
+            p2 = bl_pos[:2] + nxy * (plane_fit_ROI_length / 2.0)
+            p3 = br_pos[:2] + nxy * (plane_fit_ROI_length / 2.0)
+        elif fit_dir == -1:
+            # Fit plane to region behind the blade
+            p0 = br_pos[:2] - nxy * plane_fit_ROI_length
+            p1 = bl_pos[:2] - nxy * plane_fit_ROI_length
+            p2 = bl_pos[:2]
+            p3 = br_pos[:2]
+        else:
+            raise ValueError("fit_dir should be 1, 0, or -1")
+        # Construct the ROI polygon
+        ROI = Polygon([p0, p1, p2, p3])
+        # Get the bounding box of the ROI
+        # (minx, miny, maxx, maxy) 
+        ROI_bounds = ROI.bounds
+        # Get the indices of the bounding box corners corresponding to the minimum uvz coordinates in the map and the maximum uvz coordinates
+        indices_min, _ = self.get_map_index(np.array([[ROI_bounds[0], ROI_bounds[1]]]), None, cell_n, resolution, round_dir="floor")
+        indices_max, _ = self.get_map_index(np.array([[ROI_bounds[2], ROI_bounds[3]]]), None, cell_n, resolution, round_dir="ceil")
+
+        # Get the indices of all cells within the ROI
+        ROI_inds = np.meshgrid(np.arange(indices_min[0,0], indices_max[0,0] + 1), np.arange(indices_min[0,1], indices_max[0,1] + 1))
+        ROI_inds = np.stack((ROI_inds[0].flatten(), ROI_inds[1].flatten()), axis=-1)
+        # Get the points in the map frame
+        ROI_points = self.map_index_to_point_xy(ROI_inds, map_center, cell_n, resolution)
+        # Get the height of the ROI points
+        ROI_points_z = elevation_map[height_layer_ind, ROI_inds[:,0], ROI_inds[:,1]].get() + map_center[2]
+        ROI_points = np.concatenate((ROI_points, ROI_points_z.reshape(-1,1)), axis=1)
+        # Fit a plane to the points using trimesh SVD method
+        C, N = trimesh.points.plane_fit(ROI_points)
+
+        # Find the angle between the normal of the plane and the blade edge vector.
+        # THis will be the roll error of the blade
+        # TODO: Resume here! Need to make blade edge vector in map frame not map origin frame or maybe it doesn't matter because there are no rotaitonal differences just translation
+        blade_edge_vector = bl_pos - br_pos
+        blade_edge_vector = blade_edge_vector / np.linalg.norm(blade_edge_vector)
+        theta = np.arccos(np.dot(N, blade_edge_vector))
+        roll_error = np.pi / 2 - theta
+
+        # Get the relative pitch of the blade with respect to the plane
+        pitch_angle = np.pi / 2 -np.arccos(np.dot(N, normal))
+
+        # Plane fit here is in map coordinates not map origin coordinates. Decide if that is what we want
+        return {"C": C, "N": N}
+        
+        
     def get_xy_GET_distance(self, inds, point_z, t_dir, GET_plane_origin, normal, cell_n, resolution):
         """
         Get the distance from a query cell, inds, at the height point_z, along -t_dir to the GET plane.
@@ -2135,23 +2212,44 @@ class GETMovement:
         # T_OG0 = T_OM @ T_MG0
         # Where a point in represented in O can be obtained from a point represented in M by translating by -map_center
         T_OG0 = T_MG0.copy()
+        T_OG1 = T_MG1.copy()
         map_center = map_center.reshape(3,1)
         T_OG0[:3,3:] -= map_center
+        T_OG1[:3,3:] -= map_center
         # Starting face normal and translation vector are used to determine the direction of material movement (a heuristic)
         # Obtain the normal of the original surface of the GET and put in map origin frame
-        normal = T_OG0[:3, :3]@self.GET_mesh.face_normals[0].astype(self.data_type)
+        normal_G0 = T_OG0[:3, :3]@self.GET_mesh.face_normals[0].astype(self.data_type)
+        normal_G1 = T_OG1[:3, :3]@self.GET_mesh.face_normals[0].astype(self.data_type)
         # Obtain a point on the plane of the GET in the map origin frame, used for obtaining FEE geometry parameters
         # Using the center point of the geometry for now
-        GET_plane_origin = T_OG0[:3, :3]@self.GET_geometry_origin + T_OG0[:3, 3]
+        GET_plane_origin_0 = T_OG0[:3, :3]@self.GET_geometry_origin + T_OG0[:3, 3]
+        GET_plane_origin_1 = T_OG1[:3, :3]@self.GET_geometry_origin + T_OG1[:3, 3]
         # Also get the translation between the two poses of the GET
         translation = T_MG1[:3, 3] - T_MG0[:3, 3]
+
+        # Determine the direction we want to fit the plane to based on the motion.
+        # If the we only have a positive swept volume then we want set the fit_dir to 1
+        # If we only have a negative swept volume then we want to set the fit_dir to -1
+        # If we have both then we want to set the fit_dir to 0
+        if pos_swept_mesh is not None and neg_swept_mesh is not None:
+            fit_dir = 0
+        elif pos_swept_mesh is not None:
+            fit_dir = 1
+        elif neg_swept_mesh is not None:
+            fit_dir = -1
+        else:
+            fit_dir = 0
+        
+        # Fit a plane to the map surface near the GET
+        # TODO: Fit a plane to the desired surface and the frozen reference surface
+        self.plane_fit_params = self.fit_plane_near_GET(elevation_map, T_OG1, normal_G1, map_center, cell_n, resolution, fit_dir, height_layer_ind=0)
 
         # Check that the translation is in the direction of the normal when we don't have a self intersection
         if (pos_swept_mesh is not None) != (neg_swept_mesh is not None):
             if pos_swept_mesh is not None:
-                n = normal
+                n = normal_G0
             elif neg_swept_mesh is not None:
-                n = -normal
+                n = -normal_G0
             dot_prod = np.dot(n[:2], translation[:2])
             if dot_prod < 0:
                 warnings.warn(
@@ -2166,11 +2264,11 @@ class GETMovement:
         else:
             # Rotate the translation to the map origin frame
             pos_translation = T_MG0[:3, :3] @ pos_translation
-            p_dot_prod = np.dot(normal[:2], pos_translation[:2])
+            p_dot_prod = np.dot(normal_G0[:2], pos_translation[:2])
             if p_dot_prod < 0:
                 warnings.warn(
                 "Positive translation is in the opposite direction of the normal. "
-                "t_p o n = {} o {} = {}".format(pos_translation[:2], normal[:2], p_dot_prod)
+                "t_p o n = {} o {} = {}".format(pos_translation[:2], normal_G0[:2], p_dot_prod)
             )
 
         if neg_translation is None:
@@ -2178,11 +2276,11 @@ class GETMovement:
         else:
             # Rotate the translation to the map origin frame
             neg_translation = T_MG0[:3, :3] @ neg_translation
-            n_dot_prod = np.dot(-normal[:2], neg_translation[:2])
+            n_dot_prod = np.dot(-normal_G0[:2], neg_translation[:2])
             if n_dot_prod < 0:
                 warnings.warn(
                 "Negative translation is in the opposite direction of the normal. "
-                "t_n o n = {} o {} = {}".format(neg_translation[:2], -normal[:2], n_dot_prod)
+                "t_n o n = {} o {} = {}".format(neg_translation[:2], -normal_G0[:2], n_dot_prod)
             )
         
         # Move the swept volume poistion to the map origin frame
@@ -2208,13 +2306,13 @@ class GETMovement:
         if pos_swept_mesh is not None:
             # Move the swept volume to the map origin frame
             pos_swept_mesh.apply_transform(T_OG0)
-            elevation_updated_pos, FEE_em_params_pos, self.pos_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_pos, intersected_inds_pos, move_dir_pos, deposit_inds_pos, GET_heights_pos, GET_inds_pos = self.update_map_with_swept_volume(pos_swept_mesh, normal, pos_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            elevation_updated_pos, FEE_em_params_pos, self.pos_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_pos, intersected_inds_pos, move_dir_pos, deposit_inds_pos, GET_heights_pos, GET_inds_pos = self.update_map_with_swept_volume(pos_swept_mesh, normal_G0, pos_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin_0)
         if neg_swept_mesh is not None:
             # Flip the direction of the normal for the negative swept volume
-            normal = -normal
+            normal_G0 = -normal_G0
             # Move the swept volume to the map origin frame
             neg_swept_mesh.apply_transform(T_OG0)
-            elevation_updated_neg, FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_neg, intersected_inds_neg, move_dir_neg, deposit_inds_neg, GET_heights_neg, GET_inds_neg = self.update_map_with_swept_volume(neg_swept_mesh, normal, neg_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin)
+            elevation_updated_neg, FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_neg, intersected_inds_neg, move_dir_neg, deposit_inds_neg, GET_heights_neg, GET_inds_neg = self.update_map_with_swept_volume(neg_swept_mesh, normal_G0, neg_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin_0)
         if FEE_em_params_pos is not None and FEE_em_params_neg is not None:
             # Could support this elsewhere by returning both and then combining them after computing the FEE force
             warnings.warn("Combining the FEE parameters for the positive and negative swept volumes is not yet implemented. Not using either.")
