@@ -1479,7 +1479,7 @@ class GETMovement:
                 inds = np.array([xind, yind])
                 x_t = self.get_xy_GET_distance(inds, point_z, t_dir, GET_plane_origin, normal, cell_n, resolution)
                 if (x_t >  self.param.l_fit_max): 
-                    if surf_points[i].shape[0] > 0:
+                    if surf_points[i].shape[0] == 0:
                         warnings.warn("No surface points found at distance < l_fit_max = {}. May indicate too large a sweep translation.".format(self.param.l_fit_max))
                     break
                 if (elevation_map[2, xind, yind] > 0.5):
