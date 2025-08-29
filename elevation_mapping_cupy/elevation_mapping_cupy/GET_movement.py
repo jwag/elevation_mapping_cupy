@@ -1296,6 +1296,10 @@ class GETMovement:
         # Fit a plane to the points using trimesh SVD method
         C, N = trimesh.points.plane_fit(ROI_points)
 
+        # Make sure that normal has a positve z component (pointing up) or flip it if needded
+        if N[2] < 0:
+            N = -N
+
         # Plane fit here is in map coordinates not map origin coordinates. Decide if that is what we want
         return {"M_r_MP": C, "P_normal": N,
                 "G_r_GC0": self.cutting_edge_origin, "G_r_C0C1": self.cutting_edge_vector,

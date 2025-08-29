@@ -59,7 +59,12 @@ def transform_to_map_position(polygon, center, cell_n, resolution):
 
 
 def transform_to_map_index(points, center, cell_n, resolution, xp=cp):
-    indices = ((points - center.reshape(1, 2)) / resolution + cell_n / 2).astype(xp.int32)
+    indices = ((points - center.reshape(1, 2)) / resolution + cell_n / 2)
+    # If cell_n is even then round down, if odd then round to nearest
+    if cell_n % 2 == 0:
+        indices = indices.astype(xp.int32)
+    else:
+        indices = xp.round(indices).astype(xp.int32)
     return indices
 
 
