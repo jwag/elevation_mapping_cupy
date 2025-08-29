@@ -73,11 +73,11 @@ class ElevationMappingNode(Node):
         )
         self.get_logger().info(f"Initialized map with length: {self._map.map_length}, resolution: {self._map.resolution}, cells: {self._map.cell_n}")
 
-        self._map_q = None
+        self.pose_initialized = False
         self._map_t = None
     
     def initialize_map(self) -> None:
-        if self.use_initializer_at_start:
+        if self.use_initializer_at_start and self.pose_initialized:
             points = np.zeros((0,3))
             for i, frame_id in enumerate(self.initialize_frame_id):
                 transform = self.safe_lookup_transform(
@@ -110,6 +110,7 @@ class ElevationMappingNode(Node):
         self.get_ros_params()
     
     def get_ros_params(self) -> None:
+        # TODO: get rid of this and shove into self._map.parm.mgmt_params instead
         ''' These are parameters not in the parameter class but are used in the node.
         Commented out parameters are not used in the current python node but are left here for future
         improvemnts as they are used in the C++ node.'''
@@ -285,7 +286,7 @@ class ElevationMappingNode(Node):
         )
 
     def publish_map(self, key: str) -> None:
-        if self._map_q is None:
+        if not self.pose_initialized:
             return
         gm = GridMap()
         gm.header.frame_id = self.map_frame
@@ -535,7 +536,7 @@ class ElevationMappingNode(Node):
         self._last_t = msg.header.stamp
         GET_hist = self._GET_subs_history[sub_key]
         update, GET_curr = GET_hist.check_movement(msg)
-        if update and self._map_t is not None:
+        if update and self.pose_initialized:
             # self.get_logger().info(f"Processing GET movement for {sub_key}")
             T_MG0 = GET_hist.get_transform()
             T_MG1 = GET_curr.get_transform()
@@ -559,25 +560,34 @@ class ElevationMappingNode(Node):
             GET_hist.assign_from_instance(GET_curr)
 
     def pose_update(self) -> None:
+        if not self.pose_initialized and self.update_pose_fps < 0.0:
+            # Obtain the discretized map position. Should be zero in this case
+            self._map_t = self._map.get_position()
+            self.pose_initialized = True
         # If pose_fps is 0.0, then we only want to use the pose update to initialize the map
-        if self.update_pose_fps == 0.0 and self._map_t is not None:
+        elif (not self.pose_initialized) or (self.update_pose_fps > 0.0):
+            # Don't update the pose if we haven't received any data yet unless we are initializing the map
+            if self._last_t is None and self.pose_initialized:
+                return
+            elif self._last_t is None:
+                stamp = rclpy.time.Time()
+            else:
+                stamp = self._last_t
+            transform = self.safe_lookup_transform(
+                self.map_frame,
+                self.base_frame,
+                stamp
+            )
+            t = transform.transform.translation
+            q = transform.transform.rotation
+            trans = np.array([t.x, t.y, t.z], dtype=np.float32)
+            rot = quaternion_matrix([q.x, q.y, q.z, q.w])[:3, :3].astype(np.float32)
+            self._map.move_to(trans, rot)
+            # Obtain the discretized map position
+            self._map_t = self._map.get_position()
             # TODO: Could remove self.time_pose_update after initialzation
-            return
-        if self._last_t is None:
-            return
-        transform = self.safe_lookup_transform(
-            self.map_frame,
-            self.base_frame,
-            self._last_t
-        )
-        t = transform.transform.translation
-        q = transform.transform.rotation
-        trans = np.array([t.x, t.y, t.z], dtype=np.float32)
-        rot = quaternion_matrix([q.x, q.y, q.z, q.w])[:3, :3].astype(np.float32)
-        self._map.move_to(trans, rot)
-        # Obtain the discretized map position
-        self._map_t = self._map.get_position()
-        self._map_q = q
+            self.pose_initialized = True
+            # Initialize the map if configured to do so
         self.initialize_map()
 
     def update_variance(self) -> None:
