@@ -416,10 +416,11 @@ class ElevationMappingNode(Node):
     def register_publishers(self) -> None:
         self._publishers_dict = {}
         self._publishers_timers = []
+        sensor_qos = QoSPresetProfiles.get_from_short_key("sensor_data")
 
         for pub_key, pub_config in self.my_publishers.items():
             topic_name = f"/{self.get_name()}/{pub_key}"
-            publisher = self.create_publisher(GridMap, topic_name, 10)
+            publisher = self.create_publisher(GridMap, topic_name, sensor_qos)
             self._publishers_dict[pub_key] = publisher
 
             fps = pub_config.get("fps", 1.0)
@@ -430,8 +431,8 @@ class ElevationMappingNode(Node):
             self._publishers_timers.append(timer)
         
         # Also publish plane fit parameters
-        self.plane_publisher = self.create_publisher(Plane, "smooth_plane_fit", 10)
-        self.polygon_publisher = self.create_publisher(PolygonStamped, "smooth_plane_corners", 10)
+        self.plane_publisher = self.create_publisher(Plane, "smooth_plane_fit", sensor_qos)
+        self.polygon_publisher = self.create_publisher(PolygonStamped, "smooth_plane_corners", sensor_qos)
 
     def register_timers(self) -> None:
         pose_fps = self.update_pose_fps

@@ -2338,21 +2338,23 @@ class GETMovement:
             FEE (bool):                     Whether to obtain the geometry parameters for the FEE
         """
         resolution = np.float32(resolution)
-        var_h = np.float32(var_h)
-        # First define swept volume of the GET
-        # The swept volume is the volume of the material that the GET has moved through
-        # as it moves from T_MG0 to T_MG1
-        # Sweep the volume in the frame defined by T_MG0, i.e. relative to the initial position of the GET
-        transforms = (hom_inv(T_MG0)@T_MG1)[None, :, :]
-        if roll is None:
-            # Get relative roll between the two poses, this is used to generate a convex sweep
-            roll, _, _ = get_ext_euler_angles(transforms[0,:3,:3], xp=np)
-        roll_dirs = np.array([roll]) >= 0
-        pos_swept_mesh, pos_translation, neg_swept_mesh, neg_translation = sweep_thin_poly_mesh(self.GET_mesh, transforms, roll_dirs=roll_dirs, convex_interp=True)
-        if pos_swept_mesh is not None:
-            print("Positive swept volume found")
-        if neg_swept_mesh is not None:
-            print("Negative swept volume found")
+        if not self.param.skip_GET_sweep:
+            var_h = np.float32(var_h)
+            # First define swept volume of the GET
+            # The swept volume is the volume of the material that the GET has moved through
+            # as it moves from T_MG0 to T_MG1
+            # Sweep the volume in the frame defined by T_MG0, i.e. relative to the initial position of the GET
+            transforms = (hom_inv(T_MG0)@T_MG1)[None, :, :]
+            if roll is None:
+                # Get relative roll between the two poses, this is used to generate a convex sweep
+                roll, _, _ = get_ext_euler_angles(transforms[0,:3,:3], xp=np)
+            roll_dirs = np.array([roll]) >= 0
+            pos_swept_mesh, pos_translation, neg_swept_mesh, neg_translation = sweep_thin_poly_mesh(self.GET_mesh, transforms, roll_dirs=roll_dirs, convex_interp=True)
+            if pos_swept_mesh is not None:
+                print("Positive swept volume found")
+            if neg_swept_mesh is not None:
+                print("Negative swept volume found")
+        
         # T_OG0 = T_OM @ T_MG0
         # Where a point in represented in O can be obtained from a point represented in M by translating by -map_center
         T_OG0 = T_MG0.copy()
@@ -2375,14 +2377,14 @@ class GETMovement:
         # If the we only have a positive swept volume then we want set the fit_dir to 1
         # If we only have a negative swept volume then we want to set the fit_dir to -1
         # If we have both then we want to set the fit_dir to 0
-        if pos_swept_mesh is not None and neg_swept_mesh is not None:
-            fit_dir = 0
-        elif pos_swept_mesh is not None:
-            fit_dir = 1
-        elif neg_swept_mesh is not None:
-            fit_dir = -1
-        else:
-            fit_dir = 0
+        # if pos_swept_mesh is not None and neg_swept_mesh is not None:
+        #     fit_dir = 0
+        # elif pos_swept_mesh is not None:
+        #     fit_dir = 1
+        # elif neg_swept_mesh is not None:
+        #     fit_dir = -1
+        # else:
+        #     fit_dir = 0
         
         # Fit a plane to the frozen reference surface near the GET
         # Make the ROI centered on the blade for now
@@ -2391,48 +2393,49 @@ class GETMovement:
                                                    ROI_length=self.param.plane_fit_ROI_length,
                                                    ROI_width=self.param.plane_fit_ROI_width,
                                                    height_layer_name='elevation_reference')
-
-        # Check that the translation is in the direction of the normal when we don't have a self intersection
-        if (pos_swept_mesh is not None) != (neg_swept_mesh is not None):
-            if pos_swept_mesh is not None:
-                n = normal_G0
-            elif neg_swept_mesh is not None:
-                n = -normal_G0
-            dot_prod = np.dot(n[:2], translation[:2])
-            if dot_prod < 0:
-                warnings.warn(
-                "Translation is in the opposite direction of the normal. "
-                "t o n = {} o {} = {}".format(translation[:2], n[:2], dot_prod)
-            )
-
-        # If the mesh had a self intersection then we want to use the translations of the split meshes at the centroids
-        # But if not then just use the translation of the full GET centroid
-        if pos_translation is None:
-            pos_translation = translation
-        else:
-            # Rotate the translation to the map origin frame
-            pos_translation = T_MG0[:3, :3] @ pos_translation
-            p_dot_prod = np.dot(normal_G0[:2], pos_translation[:2])
-            if p_dot_prod < 0:
-                warnings.warn(
-                "Positive translation is in the opposite direction of the normal. "
-                "t_p o n = {} o {} = {}".format(pos_translation[:2], normal_G0[:2], p_dot_prod)
-            )
-
-        if neg_translation is None:
-            neg_translation = translation
-        else:
-            # Rotate the translation to the map origin frame
-            neg_translation = T_MG0[:3, :3] @ neg_translation
-            n_dot_prod = np.dot(-normal_G0[:2], neg_translation[:2])
-            if n_dot_prod < 0:
-                warnings.warn(
-                "Negative translation is in the opposite direction of the normal. "
-                "t_n o n = {} o {} = {}".format(neg_translation[:2], -normal_G0[:2], n_dot_prod)
-            )
         
-        # Move the swept volume poistion to the map origin frame
-        O_r_OG = M_r_MG - map_center.T
+        if not self.param.skip_GET_sweep:
+            # Check that the translation is in the direction of the normal when we don't have a self intersection
+            if (pos_swept_mesh is not None) != (neg_swept_mesh is not None):
+                if pos_swept_mesh is not None:
+                    n = normal_G0
+                elif neg_swept_mesh is not None:
+                    n = -normal_G0
+                dot_prod = np.dot(n[:2], translation[:2])
+                if dot_prod < 0:
+                    warnings.warn(
+                    "Translation is in the opposite direction of the normal. "
+                    "t o n = {} o {} = {}".format(translation[:2], n[:2], dot_prod)
+                )
+
+            # If the mesh had a self intersection then we want to use the translations of the split meshes at the centroids
+            # But if not then just use the translation of the full GET centroid
+            if pos_translation is None:
+                pos_translation = translation
+            else:
+                # Rotate the translation to the map origin frame
+                pos_translation = T_MG0[:3, :3] @ pos_translation
+                p_dot_prod = np.dot(normal_G0[:2], pos_translation[:2])
+                if p_dot_prod < 0:
+                    warnings.warn(
+                    "Positive translation is in the opposite direction of the normal. "
+                    "t_p o n = {} o {} = {}".format(pos_translation[:2], normal_G0[:2], p_dot_prod)
+                )
+
+            if neg_translation is None:
+                neg_translation = translation
+            else:
+                # Rotate the translation to the map origin frame
+                neg_translation = T_MG0[:3, :3] @ neg_translation
+                n_dot_prod = np.dot(-normal_G0[:2], neg_translation[:2])
+                if n_dot_prod < 0:
+                    warnings.warn(
+                    "Negative translation is in the opposite direction of the normal. "
+                    "t_n o n = {} o {} = {}".format(neg_translation[:2], -normal_G0[:2], n_dot_prod)
+                )
+            
+            # Move the swept volume poistion to the map origin frame
+            O_r_OG = M_r_MG - map_center.T
 
 
         # Initialize in case of no intersections
@@ -2448,75 +2451,76 @@ class GETMovement:
         GET_inds = None
         FEE_em_params_pos = None
         FEE_em_params_neg = None
-        if pos_swept_mesh is not None and neg_swept_mesh is not None and FEE==True:
-            warnings.warn("Self collision detected. No FEE parameters obtained. Updating map.")
-            FEE = False
-        if pos_swept_mesh is not None:
-            # Move the swept volume to the map origin frame
-            pos_swept_mesh.apply_transform(T_OG0)
-            elevation_updated_pos, FEE_em_params_pos, self.pos_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_pos, intersected_inds_pos, move_dir_pos, deposit_inds_pos, GET_heights_pos, GET_inds_pos = self.update_map_with_swept_volume(pos_swept_mesh, normal_G0, pos_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin_0)
-        if neg_swept_mesh is not None:
-            # Flip the direction of the normal for the negative swept volume
-            normal_G0 = -normal_G0
-            # Move the swept volume to the map origin frame
-            neg_swept_mesh.apply_transform(T_OG0)
-            elevation_updated_neg, FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_neg, intersected_inds_neg, move_dir_neg, deposit_inds_neg, GET_heights_neg, GET_inds_neg = self.update_map_with_swept_volume(neg_swept_mesh, normal_G0, neg_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin_0)
-        if FEE_em_params_pos is not None and FEE_em_params_neg is not None:
-            # Could support this elsewhere by returning both and then combining them after computing the FEE force
-            warnings.warn("Combining the FEE parameters for the positive and negative swept volumes is not yet implemented. Not using either.")
-            FEE_em_params = None
-            FEE_valid = False
-            surf_points_dict = None
-        elif FEE_em_params_pos is not None:
-            FEE_em_params = FEE_em_params_pos
-            FEE_valid = FEE_valid_pos
-            surf_points_dict = surf_points_dict_pos
-        elif FEE_em_params_neg is not None:
-            # Need to support this by including the translation direction of the portion of the swept volume
-            warnings.warn("Negative swept volume FEE parameters are only partially tested")
-            FEE_em_params = FEE_em_params_neg
-            FEE_valid = FEE_valid_pos
-            surf_points_dict = surf_points_dict_neg
-        
-        if pos_swept_mesh is not None and neg_swept_mesh is not None:
-            elevation_updated = elevation_updated_pos or elevation_updated_neg
-            if intersected_inds_pos is None:
-                intersected_inds_pos = np.zeros((0,2), dtype=np.int32)
-            if intersected_inds_neg is None:
-                intersected_inds_neg = np.zeros((0,2), dtype=np.int32)
-            # Combine the intersected indices of the positive and negative swept volumes
-            intersected_inds = np.concatenate((intersected_inds_pos, intersected_inds_neg), axis=0)
-            # Combine the movement directions of the positive and negative swept volumes
-            move_dir = [move_dir_pos, move_dir_neg]
-            if deposit_inds_pos is None:
-                deposit_inds_pos = np.zeros((0,2), dtype=np.int32)
-            if deposit_inds_neg is None:
-                deposit_inds_neg = np.zeros((0,2), dtype=np.int32)
-            deposit_inds = np.concatenate((deposit_inds_pos, deposit_inds_neg), axis=0)
-            if GET_heights_pos is None:
-                GET_heights_pos = np.zeros((0,), dtype=self.data_type)
-            if GET_heights_neg is None:
-                GET_heights_neg = np.zeros((0,), dtype=self.data_type)
-            GET_heights = np.concatenate((GET_heights_pos, GET_heights_neg), axis=0)
-            if GET_inds_pos is None:
-                GET_inds_pos = np.zeros((0,2), dtype=np.int32)
-            if GET_inds_neg is None:
-                GET_inds_neg = np.zeros((0,2), dtype=np.int32)
-            GET_inds = np.concatenate((GET_inds_pos, GET_inds_neg), axis=0)
-        elif pos_swept_mesh is not None:
-            elevation_updated = elevation_updated_pos
-            intersected_inds = intersected_inds_pos
-            move_dir = [move_dir_pos]
-            deposit_inds = deposit_inds_pos
-            GET_heights = GET_heights_pos
-            GET_inds = GET_inds_pos
-        elif neg_swept_mesh is not None:
-            elevation_updated = elevation_updated_neg
-            intersected_inds = intersected_inds_neg
-            move_dir = [move_dir_neg]
-            deposit_inds = deposit_inds_neg
-            GET_heights = GET_heights_neg
-            GET_inds = GET_inds_neg
+        if not self.param.skip_GET_sweep:
+            if pos_swept_mesh is not None and neg_swept_mesh is not None and FEE==True:
+                warnings.warn("Self collision detected. No FEE parameters obtained. Updating map.")
+                FEE = False
+            if pos_swept_mesh is not None:
+                # Move the swept volume to the map origin frame
+                pos_swept_mesh.apply_transform(T_OG0)
+                elevation_updated_pos, FEE_em_params_pos, self.pos_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_pos, intersected_inds_pos, move_dir_pos, deposit_inds_pos, GET_heights_pos, GET_inds_pos = self.update_map_with_swept_volume(pos_swept_mesh, normal_G0, pos_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.pos_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin_0)
+            if neg_swept_mesh is not None:
+                # Flip the direction of the normal for the negative swept volume
+                normal_G0 = -normal_G0
+                # Move the swept volume to the map origin frame
+                neg_swept_mesh.apply_transform(T_OG0)
+                elevation_updated_neg, FEE_em_params_neg, self.neg_swept_mesh_FEE_projection_params, FEE_valid_pos, surf_points_dict_neg, intersected_inds_neg, move_dir_neg, deposit_inds_neg, GET_heights_neg, GET_inds_neg = self.update_map_with_swept_volume(neg_swept_mesh, normal_G0, neg_translation, O_r_OG, n_steps, var_h, elevation_map, cell_n, resolution, FEE_proj_params=self.neg_swept_mesh_FEE_projection_params, obtain_FEE_em_params=FEE, GET_plane_origin=GET_plane_origin_0)
+            if FEE_em_params_pos is not None and FEE_em_params_neg is not None:
+                # Could support this elsewhere by returning both and then combining them after computing the FEE force
+                warnings.warn("Combining the FEE parameters for the positive and negative swept volumes is not yet implemented. Not using either.")
+                FEE_em_params = None
+                FEE_valid = False
+                surf_points_dict = None
+            elif FEE_em_params_pos is not None:
+                FEE_em_params = FEE_em_params_pos
+                FEE_valid = FEE_valid_pos
+                surf_points_dict = surf_points_dict_pos
+            elif FEE_em_params_neg is not None:
+                # Need to support this by including the translation direction of the portion of the swept volume
+                warnings.warn("Negative swept volume FEE parameters are only partially tested")
+                FEE_em_params = FEE_em_params_neg
+                FEE_valid = FEE_valid_pos
+                surf_points_dict = surf_points_dict_neg
+            
+            if pos_swept_mesh is not None and neg_swept_mesh is not None:
+                elevation_updated = elevation_updated_pos or elevation_updated_neg
+                if intersected_inds_pos is None:
+                    intersected_inds_pos = np.zeros((0,2), dtype=np.int32)
+                if intersected_inds_neg is None:
+                    intersected_inds_neg = np.zeros((0,2), dtype=np.int32)
+                # Combine the intersected indices of the positive and negative swept volumes
+                intersected_inds = np.concatenate((intersected_inds_pos, intersected_inds_neg), axis=0)
+                # Combine the movement directions of the positive and negative swept volumes
+                move_dir = [move_dir_pos, move_dir_neg]
+                if deposit_inds_pos is None:
+                    deposit_inds_pos = np.zeros((0,2), dtype=np.int32)
+                if deposit_inds_neg is None:
+                    deposit_inds_neg = np.zeros((0,2), dtype=np.int32)
+                deposit_inds = np.concatenate((deposit_inds_pos, deposit_inds_neg), axis=0)
+                if GET_heights_pos is None:
+                    GET_heights_pos = np.zeros((0,), dtype=self.data_type)
+                if GET_heights_neg is None:
+                    GET_heights_neg = np.zeros((0,), dtype=self.data_type)
+                GET_heights = np.concatenate((GET_heights_pos, GET_heights_neg), axis=0)
+                if GET_inds_pos is None:
+                    GET_inds_pos = np.zeros((0,2), dtype=np.int32)
+                if GET_inds_neg is None:
+                    GET_inds_neg = np.zeros((0,2), dtype=np.int32)
+                GET_inds = np.concatenate((GET_inds_pos, GET_inds_neg), axis=0)
+            elif pos_swept_mesh is not None:
+                elevation_updated = elevation_updated_pos
+                intersected_inds = intersected_inds_pos
+                move_dir = [move_dir_pos]
+                deposit_inds = deposit_inds_pos
+                GET_heights = GET_heights_pos
+                GET_inds = GET_inds_pos
+            elif neg_swept_mesh is not None:
+                elevation_updated = elevation_updated_neg
+                intersected_inds = intersected_inds_neg
+                move_dir = [move_dir_neg]
+                deposit_inds = deposit_inds_neg
+                GET_heights = GET_heights_neg
+                GET_inds = GET_inds_neg
         
         # Only return positive FEE parameters for now
         return elevation_updated, FEE_em_params, FEE_valid, surf_points_dict, intersected_inds, move_dir, deposit_inds, GET_heights, GET_inds, plane_fit_params

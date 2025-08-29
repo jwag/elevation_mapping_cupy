@@ -132,6 +132,8 @@ class Parameter(Serializable):
                             (Default: ``5.0``)
         plane_fit_ROI_width: Width of the rectangular region of interest for plane fitting in meters.
                             (Default: ``5.0``)
+        skip_GET_sweep: Skip the GET sweep update, but still update the plane fit parameters.
+                        (Default: ``False``)
         move_dir_normal_weight: Weight for the normal direction of movement in GET update.
                                 (Default: ``0.5``)
         swell_factor: Swell factor for the soil. Set to 1 for no swell of GET disturbed soil.
@@ -274,6 +276,7 @@ class Parameter(Serializable):
 
     # GET Movement parameters
     elevation_reference_update_radius: float = 5.0  # Radius in meters around the GET outside of which the elevation reference will be updated.
+    skip_GET_sweep: bool = False  # Skip the GET sweep update, but still update the plane fit parameters.
     plane_fit_ROI_length: float = 5.0  # Length of the rectangular region of interest for plane fitting in meters.
     plane_fit_ROI_width: float = 5.0  # Width of the rectangular region of interest for plane fitting in meters.
     move_dir_normal_weight: float = 0.5  # Weight for the normal direction of movement in GET update.

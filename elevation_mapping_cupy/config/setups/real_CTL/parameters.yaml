@@ -50,6 +50,7 @@ elevation_mapping_node:
 
     #### Ground Engaging Tool (GET) Parameters ####
     # TODO: Tune all of these parameters
+    skip_GET_sweep: false # Skip the GET sweep and only use the odometry
     elevation_reference_update_radius: 5.0 # Radius in meters around the GET outside of which the elevation reference will be updated.
     plane_fit_ROI_length:  5.0  # Length of the rectangular region of interest for plane fitting in meters.
     plane_fit_ROI_width: 5.0 # Width of the rectangular region of interest for plane fitting in meters.
