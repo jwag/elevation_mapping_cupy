@@ -12,8 +12,9 @@ from elevation_mapping_cupy.parameter import Parameter
 
 import matplotlib.pyplot as plt
 
-from shapely.geometry import Polygon, MultiPolygon
+from shapely.geometry import Polygon, MultiPolygon, Point
 from shapely.ops import unary_union
+from shapely.affinity import translate as shapely_translate
 
 warnings.simplefilter('always', UserWarning)
 
@@ -1259,7 +1260,7 @@ class GETMovement:
         Args:
             elevation_map (np.ndarray):     The elevation map that provides the layer to fit the plane to
             T_OG (np.ndarray) (4,4):        The transform from the map origin to the GET frame (should be at end of sweep)
-            normal (np.ndarray) (3,):       The normal vector of the plane in the map frame
+            normal (np.ndarray) (3,):       The normal vector of the blade plane in the map frame
             map_center (np.ndarray) (3,):   The center of the map in the map frame
             cell_n (int):                   The number of cells in the map
             resolution (float):             The resolution of the map
@@ -1302,32 +1303,62 @@ class GETMovement:
             p3 = br_pos[:2]
         else:
             raise ValueError("fit_dir should be 1, 0, or -1")
-        # Construct the ROI polygon
-        ROI = Polygon([p0, p1, p2, p3])
-        # Get the bounding box of the ROI
+        # Construct the ROI polygon in map origin frame
+        points_O = np.array([p0, p1, p2, p3])
+        ROI_O = Polygon(points_O)
+        # Also get polygon in map frame
+        ROI_M = shapely_translate(ROI_O, xoff=map_center[0], yoff=map_center[1])
+        points_M = np.array(ROI_M.exterior.coords)
+
+        # Get the axis aligned bounding box of the ROI
         # (minx, miny, maxx, maxy) 
-        ROI_bounds = ROI.bounds
+        ROI_bounds = ROI_O.bounds
         # Get the indices of the bounding box corners corresponding to the minimum uvz coordinates in the map and the maximum uvz coordinates
         indices_min, _ = self.get_map_index(np.array([[ROI_bounds[0], ROI_bounds[1]]]), None, cell_n, resolution, round_dir="floor")
         indices_max, _ = self.get_map_index(np.array([[ROI_bounds[2], ROI_bounds[3]]]), None, cell_n, resolution, round_dir="ceil")
 
-        # Get the indices of all cells within the ROI
-        ROI_inds = np.meshgrid(np.arange(indices_min[0,0], indices_max[0,0] + 1), np.arange(indices_min[0,1], indices_max[0,1] + 1))
-        ROI_inds = np.stack((ROI_inds[0].flatten(), ROI_inds[1].flatten()), axis=-1)
+        # Get the indices of all cells within the axis aligned bounding box for the ROI
+        AABB_indsx, AABB_indsy = np.meshgrid(np.arange(indices_min[0,0], indices_max[0,0] + 1), np.arange(indices_min[0,1], indices_max[0,1] + 1))
+        AABB_inds = np.stack((AABB_indsx.flatten(), AABB_indsy.flatten()), axis=-1)
         # Get the points in the map frame
-        ROI_points = self.map_index_to_point_xy(ROI_inds, map_center, cell_n, resolution)
+        AABB_points = self.map_index_to_point_xy(AABB_inds, map_center, cell_n, resolution)
+        # Check if the points are within the ROI polygon (Note points are in map frame so we need ROI_M)
+        in_ROI = np.array([ROI_M.contains(Point(p)) for p in AABB_points])
+        # Get the points that are within the ROI polygon
+        ROI_inds = AABB_inds[in_ROI]
+        ROI_points = AABB_points[in_ROI]
+
         # Get the height of the ROI points
         ROI_points_z = self.get_layer(elevation_map, height_layer_name)[ROI_inds[:,0], ROI_inds[:,1]].get() + map_center[2]
         ROI_points = np.concatenate((ROI_points, ROI_points_z.reshape(-1,1)), axis=1)
-        # Fit a plane to the points using trimesh SVD method
+        
+        # Fit a plane to the points using trimesh SVD method (in map frame)
         C, N = trimesh.points.plane_fit(ROI_points)
 
         # Make sure that normal has a positve z component (pointing up) or flip it if needded
         if N[2] < 0:
             N = -N
 
+        # For visualization of the plane now find the coordinates of the corners of the plane
+        points_M = np.column_stack((points_M, np.zeros(points_M.shape[0])))
+        # Tried to use trimesh.points.project_to_plane, but it doesn't behave properly
+        # Project the points onto the plane manually
+        # The projection of a point P onto a plane with normal N and point C on the plane is:
+        # P_proj = P - N * dot(N, (P - C))
+        points_M_proj = points_M - np.dot(points_M - C, N).reshape(-1, 1) * N
+
+
+        # blade_cent_dist distance is the distance between the blade and the blane at the center
+        # Plane equation from normal and point on the plane is 
+        # N[0](x-C[0]) + N[1](y-C[1]) + N[2](z-C[2]) = 0
+        # Convert to ax + by + cz + d = 0
+        a = N[0]
+        b = N[1]
+        c = N[2]
+        d = -N[0]*C[0] - N[1]*C[1] - N[2]*C[2]
+
         # Plane fit here is in map coordinates not map origin coordinates. Decide if that is what we want
-        return {"M_r_MP": C, "P_normal": N,
+        return {"M_r_MP": C, "P_normal": N, "coeffs": np.array([a, b, c, d]), "points": points_M_proj,
                 "G_r_GC0": self.cutting_edge_origin, "G_r_C0C1": self.cutting_edge_vector,
                 "G_normal": self.GET_mesh.face_normals[0].astype(self.data_type)}
         

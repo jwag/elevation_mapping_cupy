@@ -1385,7 +1385,7 @@ class ElevationMap:
             # Compile the dialation filter kernel as requested to enable changing the size
             dilation_filter_kernel_initializer = dilation_filter_kernel(self.cell_n, self.cell_n, dilation_size_initialize)
             with self.map_lock:
-                points = cp.asarray(points, dtype=self.data_type)
+                points = cp.asarray(init_data, dtype=self.data_type)
                 indices = transform_to_map_index(points[:, :2], self.center[:2], self.cell_n, self.resolution)
                 points[:, :2] = indices.astype(points.dtype)
                 points[:, 2] -= self.center[2]

@@ -24,6 +24,7 @@
     <!-- Might need to remove point_cloud_transport if not used -->
     <depend>point_cloud_transport</depend>
     <depend>message_filters</depend>
+    <depend>shape_msgs</depend>
     <depend>elevation_map_msgs</depend>
     <depend>grid_map_msgs</depend>
     <depend>grid_map_ros</depend>

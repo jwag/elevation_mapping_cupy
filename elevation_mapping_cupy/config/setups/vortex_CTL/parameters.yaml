@@ -51,6 +51,7 @@ elevation_mapping_node:
     #### Ground Engaging Tool (GET) Parameters ####
     # TODO: Tune all of these parameters
     elevation_reference_update_radius: 5.0 # Radius in meters around the GET outside of which the elevation reference will be updated.
+    plane_fit_ROI_length:  5.0  # Length of the rectangular region of interest for plane fitting in meters. Width is determined by the blade width.
     move_dir_normal_weight: 0.5
     # TODO: Consider moving some of these parameters to the parameters.yaml file as they should be the same for all blades
     swell_factor: 1.2 # TODO: Make parameter (use something reasonable). Set to 1 for no swell
@@ -100,15 +101,17 @@ elevation_mapping_node:
     voxel_filter_size: 0.1                          # Voxel Filter the incoming point cloud with this size. # TODO: Potentially make parameter of base class
 
     #### Initializer ####
-    initialize_method: 'linear'                                         # Choose one from 'nearest', 'linear', 'cubic' 
-    initialize_frame_id: ['base_footprint']                             # One tf (like ['footprint'] ) initializes a square around it. 
+    initializer_method: 'points'                    # Choose one from 'heightmap', 'points'
+    use_initializer_at_start: true                                      # Use initializer when the node starts.
+    initialized_variance: 1000.0                                        # initial variance for each cell.
+    # Config for points initializer # TODO: rename these with points prefix
+    initialize_method: 'linear'                                         # Choose one from 'nearest', 'linear', 'cubic'
+    initialize_frame_id: ['odom']                             # One tf (like ['footprint'] ) initializes a square around it. 
     initialize_tf_offset: [0.0]                                         # z direction. Should be same number as initialize_frame_id. 
     dilation_size_initialize: 2                                         # dilation size after the init. 
     initialize_tf_grid_size: 10.0                                        # This is not used if number of tf is more than 3. 
-    use_initializer_at_start: true                                      # Use initializer when the node starts. 
-    initialized_variance: 1000.0                                        # initial variance for each cell.   
 
-    #### General Publishing Parameters (Only affects publsihing)####
+    #### General Publishing Parameters (Only affects publishing)####
     map_acquire_fps: 5.0                            # Raw map is fetched from GPU memory in this fps. 
     enable_pointcloud_publishing: false             
     recordable_fps: 3.0                             # Recordable fps for pointcloud.

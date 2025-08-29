@@ -6,6 +6,7 @@ from functools import partial
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSPresetProfiles
+from rclpy.qos import QoSProfile, DurabilityPolicy, HistoryPolicy, ReliabilityPolicy
 from ament_index_python.packages import get_package_share_directory
 import ros2_numpy as rnp
 from sensor_msgs.msg import PointCloud2, Image, CameraInfo
@@ -20,6 +21,8 @@ from grid_map_msgs.msg import GridMap
 from std_msgs.msg import Float32MultiArray
 from std_msgs.msg import MultiArrayLayout as MAL
 from std_msgs.msg import MultiArrayDimension as MAD
+from shape_msgs.msg import Plane
+from geometry_msgs.msg import PolygonStamped, Point32
 from rclpy.serialization import serialize_message
 from elevation_mapping_cupy import ElevationMap, Parameter
 
@@ -77,14 +80,19 @@ class ElevationMappingNode(Node):
         self._map_t = None
     
     def initialize_map(self) -> None:
-        if self.use_initializer_at_start and self.pose_initialized:
+        """Initialize the map with a square grid of points of size initialize_tf_grid_size*2 around
+        either the base/chassis position or the world/map frame. The points are initialized at the height of the
+        chassis position plus the initialize_tf_offset. The initialize_tf_offset is a list of offsets for each
+        """
+        # Initialize the map if enabled and if we have initialized the starting map position
+        if self.use_initializer_at_start and self.pose_initialized and self.initializer_method == "points":
+            # TODO: Add initialization from pointcloud here too
             points = np.zeros((0,3))
             for i, frame_id in enumerate(self.initialize_frame_id):
                 transform = self.safe_lookup_transform(
                     self.map_frame,
                     frame_id,
-                    rclpy.time.Time()
-                )
+                    self.get_clock().now()                )
                 t = transform.transform.translation
                 p = np.array([t.x, t.y, t.z])
                 p[2] += self.initialize_tf_offset[i]
@@ -95,15 +103,27 @@ class ElevationMappingNode(Node):
                 init_points = np.zeros((0, 3))
                 for p in points:
                     init_points = np.vstack((init_points, square_pts + p))
-                self._map.initialize_map(init_points, new_variance=self.initialized_variance, method=self.initialize_method, dilation_size_initialize=self.dilation_size_initialize) # TODO: Add rosparams for dilation_size_initialize and initialized_variance
+                self._map.initialize_map(init_data=init_points,
+                                         init_method="points",
+                                         new_variance=self.initialized_variance,
+                                         points_interp_method=self.initialize_method,
+                                         dilation_size_initialize=self.dilation_size_initialize) # TODO: Add rosparams for dilation_size_initialize and initialized_variance
                 # Only initialize once at startup
                 self.use_initializer_at_start = False
             # self._map.elevation_map[7,:] = loose_depth
-
+        elif self.use_initializer_at_start and self.pose_initialized and self.initializer_method == "heightmap":
+            raise NotImplementedError("ROS Support for Heightmap initialization not implemented yet")
+            # Initialize the map with the generated heightmap
+            self._map.initialize_map(init_data=self.init_heightmap,
+                                     init_method="heightmap",
+                                     new_variance=self._map.param.mgmt_params['initialized_variance'])
+            # Only initialize once at startup
+            self.use_initializer_at_start = False
 
     def initialize_ros(self) -> None:
+        # For rolling and beyond checkout bitbots_tf2 from bitbots_tf_buffer import Buffer
         self._tf_buffer = tf2_ros.Buffer()
-        self._listener = tf2_ros.TransformListener(self._tf_buffer, self)
+        self._listener = tf2_ros.TransformListener(self._tf_buffer, self, spin_thread=False)
         self._last_update_time_t = None
         self._last_update_variance_t = None
         self.set_param_values_from_ros()
@@ -113,12 +133,14 @@ class ElevationMappingNode(Node):
         # TODO: get rid of this and shove into self._map.parm.mgmt_params instead
         ''' These are parameters not in the parameter class but are used in the node.
         Commented out parameters are not used in the current python node but are left here for future
-        improvemnts as they are used in the C++ node.'''
+        improvements as they are used in the C++ node.
+        '''
         self.initialize_method = self.get_parameter('initialize_method').get_parameter_value().string_value
         self.initialize_frame_id = self.get_parameter('initialize_frame_id').get_parameter_value().string_array_value
         self.initialize_tf_offset = self.get_parameter('initialize_tf_offset').get_parameter_value().double_array_value
         self.initialize_tf_grid_size = self.get_parameter('initialize_tf_grid_size').get_parameter_value().double_value
         self.use_initializer_at_start = self.get_parameter('use_initializer_at_start').get_parameter_value().bool_value
+        self.initializer_method = self.get_parameter('initializer_method').get_parameter_value().string_value
         self.dilation_size_initialize = self.get_parameter('dilation_size_initialize').get_parameter_value().integer_value
         self.initialized_variance = self.get_parameter('initialized_variance').get_parameter_value().double_value
         self.map_frame = self.get_parameter('map_frame').get_parameter_value().string_value
@@ -265,6 +287,10 @@ class ElevationMappingNode(Node):
                 partial(self.publish_map, key=pub_key)
             )
             self._publishers_timers.append(timer)
+        
+        # Also publish plane fit parameters
+        self.plane_publisher = self.create_publisher(Plane, "smooth_plane_fit", 10)
+        self.polygon_publisher = self.create_publisher(PolygonStamped, "smooth_plane_corners", 10)
 
     def register_timers(self) -> None:
         pose_fps = self.update_pose_fps
@@ -322,17 +348,22 @@ class ElevationMappingNode(Node):
 
     def safe_lookup_transform(self, target_frame, source_frame, time):
         try:
-            # TODO: Figure out why this errors sometimes
+            # Use the provided time for the lookup
             return self._tf_buffer.lookup_transform(
                 target_frame,
                 source_frame,
-                time
+                time,
+                # timeout=Duration(seconds=0.02), # TODO: Make this a parameter and decide where we would want to use it.
             )
-        except tf2_ros.ExtrapolationException:
+        except tf2_ros.ExtrapolationException as e:
+            # Fallback to the current time using the node's clock
+            self.get_logger().warn(f"ExtrapolationException encountered: {str(e)}")
             return self._tf_buffer.lookup_transform(
                 target_frame,
                 source_frame,
-                rclpy.time.Time()
+                time=rclpy.time.Time(), # latest available transform
+                # self.get_clock().now(),
+                # timeout=Duration(seconds=5.0)
             )
 
     def image_callback(self, camera_msg: Image, camera_info_msg: CameraInfo, sub_key: str) -> None:
@@ -548,15 +579,39 @@ class ElevationMappingNode(Node):
             n_steps = 2
             dt = GET_curr.stamp_float - GET_hist.stamp_float
             roll = 0.1 # TODO: could probably more efficiently obtain roll here than the internal implementation
-            self._map.input_GET_movement(GET_ID=sub_key,
-                            T_MG0=T_MG0,
-                            T_MG1=T_MG1,
-                            M_r_MG=M_r_MG,
-                            n_steps=n_steps,
-                            var_h=var_h,
-                            roll= roll)
+            FEE_em_params, surf_points_dict, plane_fit_params = self._map.input_GET_movement(
+                GET_ID=sub_key,
+                T_MG0=T_MG0,
+                T_MG1=T_MG1,
+                M_r_MG=M_r_MG,
+                n_steps=n_steps,
+                var_h=var_h,
+                roll=roll
+            )
             # Update the history with the current message
             GET_hist.assign_from_instance(GET_curr)
+            # Publish the plane fit
+            self.publish_plane_fit(plane_fit_params)
+    
+    def publish_plane_fit(self, plane_fit_params: dict) -> None:
+        # Publish shape_msgs/Plane message
+        # Note: These are in map frame
+        plane_msg = Plane()
+        coeffs = plane_fit_params["coeffs"] # a, b, c, d
+        plane_msg.coef = coeffs.tolist()
+
+        self.plane_publisher.publish(plane_msg)
+
+        # Publish geometry_msgs/PolygonStamped message
+        polygon_msg = PolygonStamped()
+        polygon_msg.header.frame_id = self.map_frame
+        polygon_msg.header.stamp = self.get_clock().now().to_msg()
+        for point in plane_fit_params["points"]:
+            pt = Point32()
+            pt.x, pt.y, pt.z = point
+            polygon_msg.polygon.points.append(pt)
+
+        self.polygon_publisher.publish(polygon_msg)
 
     def pose_update(self) -> None:
         if not self.pose_initialized and self.update_pose_fps < 0.0:
@@ -569,7 +624,9 @@ class ElevationMappingNode(Node):
             if self._last_t is None and self.pose_initialized:
                 return
             elif self._last_t is None:
-                stamp = rclpy.time.Time()
+                # stamp = self.get_clock().now()
+                # Wait until we have received a pointcloud or image to initialize the map
+                return
             else:
                 stamp = self._last_t
             transform = self.safe_lookup_transform(
@@ -609,7 +666,9 @@ class ElevationMappingNode(Node):
 def main(args=None) -> None:
     rclpy.init(args=args)
     node = ElevationMappingNode()
-    executor = rclpy.executors.SingleThreadedExecutor()
+    # executor = rclpy.executors.SingleThreadedExecutor()
+    # Fixes tf extrapolation issues in sim right now
+    executor = rclpy.executors.MultiThreadedExecutor()
     executor.add_node(node)
     try:
         executor.spin()
