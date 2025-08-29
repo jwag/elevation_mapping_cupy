@@ -50,6 +50,7 @@ elevation_mapping_node:
 
     #### Ground Engaging Tool (GET) Parameters ####
     # TODO: Tune all of these parameters
+    elevation_reference_update_radius: 5.0 # Radius in meters around the GET outside of which the elevation reference will be updated.
     move_dir_normal_weight: 0.5
     # TODO: Consider moving some of these parameters to the parameters.yaml file as they should be the same for all blades
     swell_factor: 1.2 # TODO: Make parameter (use something reasonable). Set to 1 for no swell

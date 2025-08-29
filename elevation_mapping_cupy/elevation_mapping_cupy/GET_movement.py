@@ -1251,7 +1251,7 @@ class GETMovement:
                 break
         return edge_inds, edge_heights
     
-    def fit_plane_near_GET(self, elevation_map, T_OG, normal, map_center, cell_n, resolution, fit_dir, height_layer_name='elevation'):
+    def fit_plane_near_GET(self, elevation_map, T_OG, normal, map_center, cell_n, resolution, fit_dir, ROI_length, height_layer_name='elevation'):
         """Fit a plane to a surface layer of the elevation map in the direction of blade movement.
 
         This can be used as a reference for a blade controller
@@ -1281,24 +1281,23 @@ class GETMovement:
         br_pos = T_OG[:3,:3] @ self.cutting_edge_origin + T_OG[:3,3]
         bl_pos = T_OG[:3,:3] @ (self.cutting_edge_origin + self.cutting_edge_vector) + T_OG[:3,3]
         nxy = np.array([normal[0], normal[1]])/np.linalg.norm(normal[0:2])
-        plane_fit_ROI_length = 0.5 # meters
         # Now construct the ROI polygon depending on the fit_dir
         if fit_dir == 1:
             # Fit plane to region in front of the blade
             p0 = br_pos[:2]
             p1 = bl_pos[:2]
-            p2 = bl_pos[:2] + nxy * plane_fit_ROI_length
-            p3 = br_pos[:2] + nxy * plane_fit_ROI_length
+            p2 = bl_pos[:2] + nxy * ROI_length
+            p3 = br_pos[:2] + nxy * ROI_length
         elif fit_dir == 0:
             # Fit plane to region around the blade
-            p0 = br_pos[:2] - nxy * (plane_fit_ROI_length / 2.0)
-            p1 = bl_pos[:2] - nxy * (plane_fit_ROI_length / 2.0)
-            p2 = bl_pos[:2] + nxy * (plane_fit_ROI_length / 2.0)
-            p3 = br_pos[:2] + nxy * (plane_fit_ROI_length / 2.0)
+            p0 = br_pos[:2] - nxy * (ROI_length / 2.0)
+            p1 = bl_pos[:2] - nxy * (ROI_length / 2.0)
+            p2 = bl_pos[:2] + nxy * (ROI_length / 2.0)
+            p3 = br_pos[:2] + nxy * (ROI_length / 2.0)
         elif fit_dir == -1:
             # Fit plane to region behind the blade
-            p0 = br_pos[:2] - nxy * plane_fit_ROI_length
-            p1 = bl_pos[:2] - nxy * plane_fit_ROI_length
+            p0 = br_pos[:2] - nxy * ROI_length
+            p1 = bl_pos[:2] - nxy * ROI_length
             p2 = bl_pos[:2]
             p3 = br_pos[:2]
         else:
@@ -2347,9 +2346,12 @@ class GETMovement:
         else:
             fit_dir = 0
         
-        # Fit a plane to the map surface near the GET
-        # TODO: Fit a plane to the desired surface and the frozen reference surface
-        plane_fit_params = self.fit_plane_near_GET(elevation_map, T_OG1, normal_G1, map_center, cell_n, resolution, fit_dir, height_layer_name='elevation_reference')
+        # Fit a plane to the frozen reference surface near the GET
+        # Make the ROI centered on the blade for now
+        fit_dir = 0
+        plane_fit_params = self.fit_plane_near_GET(elevation_map, T_OG1, normal_G1, map_center, cell_n, resolution, fit_dir,
+                                                   ROI_length=self.param.plane_fit_ROI_length,
+                                                   height_layer_name='elevation_reference')
 
         # Check that the translation is in the direction of the normal when we don't have a self intersection
         if (pos_swept_mesh is not None) != (neg_swept_mesh is not None):

@@ -724,6 +724,62 @@ def dilation_filter_kernel(width, height, dilation_size):
     )
     return dilation_filter_kernel
 
+def update_elevation_reference_kernel(width, height, resolution):
+    update_elevation_reference_kernel = cp.ElementwiseKernel(
+        in_params="raw U ref_point, raw U radius, raw U center_x, raw U center_y",
+        out_params="raw U debug_dist, raw U map",
+        preamble=string.Template(
+        """
+        __device__ int get_map_idx(int idx, int layer_n) {
+            const int layer = ${width} * ${height};
+            return layer * layer_n + idx;
+        }
+
+        // The array is of size width * height and is indexed in row-major order, meaning that
+        // the first ${width} elements correspond to the first row, the next ${width} elements to the second row, and so on.
+        // x_indx is in [0, ${width}-1] and y_indx is in [0, ${height}-1]
+        __device__ int get_x_index(int idx) {
+            return idx / ${width};
+        }
+        __device__ int get_y_index(int idx) {
+            return idx % ${width};
+        }
+        __device__ float16 cell_center_posx(int idx, float16 center_x) {
+            // Assuming that division of an int by a float (width/2.0) returns a float16 value not an int
+            // If it doesn't then we need logic here to handle that and remove the 0.5 offset
+            return (get_x_index(idx) - ${width} / 2.0 + 0.5) * ${resolution} + center_x;
+        }
+        __device__ float16 cell_center_posy(int idx, float16 center_y) {
+            // Assuming that division of an int by a float (height/2.0) returns a float16 value not an int
+            // If it doesn't then we need logic here to handle that and remove the 0.5 offset
+            return (get_y_index(idx) - ${height} / 2.0 + 0.5) * ${resolution} + center_y;
+        }
+        __device__ float16 xy_distance(float16 x, float16 y, float16 cx, float16 cy) {
+            return sqrtf((x - cx) * (x - cx) + (y - cy) * (y - cy));
+        }
+        """
+        ).substitute(width=width, height=height, resolution=resolution),
+        operation=string.Template(
+            """
+            // For a given cell i, get the center position in map coordinates
+            // Then find the distance between that point and the reference point
+            float16 px = cell_center_posx(i, center_x[0]);
+            float16 py = cell_center_posy(i, center_y[0]);
+            // Obtain distance between reference point and center of cell i
+            // ref_point and px must be in the same coordinate system
+            float16 dist = xy_distance(ref_point[0], ref_point[1], px, py);
+            debug_dist[i] = dist; // Store the distance for debugging purposes
+            if (dist > radius) {
+                // If distance is greater than the radius, set the reference height to the height of the cell
+                map[get_map_idx(i, 8)] = map[get_map_idx(i, 0)];
+            }
+            // Otherwise don't update the reference height
+            """
+        ).substitute(),
+        name="update_elevation_reference_kernel",
+    )
+    return update_elevation_reference_kernel
+
 
 def normal_filter_kernel(width, height, resolution):
     normal_filter_kernel = cp.ElementwiseKernel(

@@ -30,6 +30,7 @@ from elevation_mapping_cupy.kernels import normal_filter_kernel
 from elevation_mapping_cupy.kernels import polygon_mask_kernel
 from elevation_mapping_cupy.kernels import image_to_map_correspondence_kernel
 from elevation_mapping_cupy.kernels import soil_erosion_kernel
+from elevation_mapping_cupy.kernels import update_elevation_reference_kernel
 
 from elevation_mapping_cupy.sensor_processor import SensorProcessor, make_3x1vec
 from elevation_mapping_cupy.GET_movement import GETMovement
@@ -349,6 +350,10 @@ class ElevationMap:
                                                        self.param.loose_soil_phi,
                                                        loose_soil_gamma,
                                                        self.param.soil_erosion_alpha_min,)
+        
+        self.update_elevation_reference_kernel = update_elevation_reference_kernel(self.cell_n,
+                                                                                   self.cell_n,
+                                                                                   self.resolution)
 
     def compile_image_kernels(self):
         """Compile kernels related to processing image messages."""
@@ -617,7 +622,21 @@ class ElevationMap:
             
                 # if cp.any(self.elevation_map[0] > 3.0):
                 #     warnings.warn("Warning: Elevation map height is greater than 3.0 m. This may indicate problems with the soil erosion plugin.")
-
+            
+            # Update the elvation reference layer after updating the map
+            # ref_point, raw U radius, raw U center_x, raw U center_y, map
+            # Make the reference update be centered on the blade position
+            ref_point = T_MG1[:2, 3] # The xy translation part of the transformation matrix
+            debug_dist = cp.zeros_like(self.elevation_map[0])
+            self.update_elevation_reference_kernel(cp.asarray(ref_point, dtype=self.data_type),  # Reference point in map frame
+                                                   self.param.elevation_reference_update_radius,  # U radius
+                                                   self.center[0],
+                                                   self.center[1],
+                                                   debug_dist,
+                                                   self.elevation_map,
+                                                   size=(self.cell_n * self.cell_n)
+                                                   )
+                                                   
 
             # Warning this was checking if surf_points_dict was none to determine if this was a valid FEE measurement, but
             # this was resulting in erosion being applied to the map and not excluding the blade. So now we are checking if

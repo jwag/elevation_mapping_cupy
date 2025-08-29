@@ -126,12 +126,16 @@ class Parameter(Serializable):
                 (Default: ``None``)
         true_cell_n: True number of cells in the map.  
                      (Default: ``None``)
+        elevation_reference_update_radius: Radius in meters around the GET outside of which the elevation reference will be updated.
+                    ( Default: ``5``)
+        plane_fit_ROI_length: Length of the rectangular region of interest for plane fitting in meters. Width is determined by the blade width.
+                            (Default: ``5.0``)
         move_dir_normal_weight: Weight for the normal direction of movement in GET update.
                                 (Default: ``0.5``)
         swell_factor: Swell factor for the soil. Set to 1 for no swell of GET disturbed soil.
                       (Default: ``1.0``)
         spill_factor: (deprecated. Use erosion instead) Proportion of loose material moved during a sweep that is spilled.  
-                      (Default: ``0.05``)
+                      (Default: ``0.0``)
         compacted_soil_moist_unit_weight: Unit weight of compacted soil in N/m^3.  
                                           (Default: ``14635.91630769231`` 50% relative density of Vortex loam.)
         l_fit_max: Maximum distance from the blade to find surface points for surface plane fitting in FEE param calculation.
@@ -267,9 +271,11 @@ class Parameter(Serializable):
     w_out: np.ndarray = field(default_factory=lambda: np.zeros((1, 12, 1, 1)))  # weights for the output layer
 
     # GET Movement parameters
+    elevation_reference_update_radius: float = 5.0  # Radius in meters around the GET outside of which the elevation reference will be updated.
+    plane_fit_ROI_length: float = 5.0  # Length of the rectangular region of interest for plane fitting in meters. Width is determined by the blade width.
     move_dir_normal_weight: float = 0.5  # Weight for the normal direction of movement in GET update.
     swell_factor: float = 1.0  # Swell factor for the soil. Set to 1 for no swell of GET disturbed soil.
-    spill_factor: float = 0.05  # Proportion of loose material moved during a sweep that is spilled.
+    spill_factor: float = 0.0  # Proportion of loose material moved during a sweep that is spilled.
     compacted_soil_moist_unit_weight: float = 14635.91630769231  # Unit weight of compacted soil in N/m^3.
     l_fit_max: float = 1.0  # Maximum distance from the blade to find surface points for surface plane fitting in FEE param calculation.
     surf_interp_coeff: float = 3.0  # Coefficient for exponential function weighting distance from blade for surface fitting in FEE param calculation.
