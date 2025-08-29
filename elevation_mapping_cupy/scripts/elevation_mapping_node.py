@@ -294,7 +294,7 @@ class ElevationMappingNode(Node):
 
     def register_timers(self) -> None:
         pose_fps = self.update_pose_fps
-        if pose_fps == 0.0:
+        if pose_fps <= 0.0:
             # If pose_fps is 0.0, then we will call the pose_update at a low frequency
             # but internally it will only update the pose once the map is initialized
             pose_fps = 1.0
@@ -614,7 +614,7 @@ class ElevationMappingNode(Node):
         self.polygon_publisher.publish(polygon_msg)
 
     def pose_update(self) -> None:
-        if not self.pose_initialized and self.update_pose_fps < 0.0:
+        if not self.pose_initialized and self.update_pose_fps <= 0.0:
             # Obtain the discretized map position. Should be zero in this case
             self._map_t = self._map.get_position()
             self.pose_initialized = True

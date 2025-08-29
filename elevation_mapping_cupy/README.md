@@ -38,6 +38,7 @@ ros2 run rmw_zenoh_cpp rmw_zenohd
 Connect an XBOX controller to the linux machine and run the joy node
 ```bash
 ros2 run joy joy_node --ros-args -p use_sim_time:=true
+ros2 launch ctl_blade_controller joy-launch.py use_sim_time:=true
 ```
 
 On the Windows Machine launch the Vortex :
@@ -48,4 +49,9 @@ ros2 run ros2_vortex_SIL CTL_SIL_node
 Launch the elevation mapping node with the configs for the CTL:
 ```bash
 ros2 launch elevation_mapping_cupy elevation_mapping_vortex_CTL.launch.py
+```
+
+Launch the controller
+```bash
+ros2 launch ctl_blade_controller launch_blade_control.launch.py
 ```
