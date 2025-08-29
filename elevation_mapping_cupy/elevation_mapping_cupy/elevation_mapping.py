@@ -544,6 +544,16 @@ class ElevationMap:
         mask = self.elevation_map[2] > 0.5
         self.elevation_map[5] = cp.where(mask, self.elevation_map[0], self.elevation_map[5])
         self.elevation_map[6] = cp.where(mask, 0.0, self.elevation_map[6])
+
+    def fit_plane_near_GET_start(self, GET_ID: str, T_MG1: cp._core.core.ndarray):
+        with self.map_lock:
+            center = self.get_position()            
+            plane_fit_params = self.GETs[GET_ID].fit_plane_near_GET_start(self.elevation_map,
+                                                                center,
+                                                                self.cell_n,
+                                                                self.resolution,
+                                                                T_MG1)
+        return plane_fit_params
     
     def input_GET_movement(self, 
                            GET_ID: str,

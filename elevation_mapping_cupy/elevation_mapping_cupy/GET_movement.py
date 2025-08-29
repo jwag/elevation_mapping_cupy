@@ -2350,6 +2350,37 @@ class GETMovement:
             move_dir = None
         
         return move_dir
+    
+    def fit_plane_near_GET_start(self, elevation_map, map_center, cell_n, resolution, T_MG1):
+        """Convenience function to fit a plane to the surface of the GET at the start of the movement prior to a sweep.
+        Args:
+            elevation_map (xp.ndarray):     The full starting elevation map to update in place
+            map_center (np.ndarray):        The center of the map in the map frame
+            cell_n (int):                   The number of cells in the map
+            resolution (float):             The resolution of the map
+            T_MG1 (np.ndarray):             The final pose of the GET in the map frame
+            
+        Returns:
+            plane_fit_params (dict):        The parameters for the plane fit with the keys:
+        """
+        # T_OG1 = T_OM @ T_MG1
+        # Where a point in represented in O can be obtained from a point represented in M by translating by -map_center
+        T_OG1 = T_MG1.copy()
+        map_center = map_center.reshape(3,1)
+        T_OG1[:3,3:] -= map_center
+        # Starting face normal and translation vector are used to determine the direction of material movement (a heuristic)
+        # Obtain the normal of the original surface of the GET and put in map origin frame
+        normal_G1 = T_OG1[:3, :3]@self.GET_mesh.face_normals[0].astype(self.data_type)
+        
+        # Fit a plane to the frozen reference surface near the GET
+        # Make the ROI centered on the blade for now
+        fit_dir = 0
+        plane_fit_params = self.fit_plane_near_GET(elevation_map, T_OG1, normal_G1, map_center, cell_n, resolution, fit_dir,
+                                                   ROI_length=self.param.plane_fit_ROI_length,
+                                                   ROI_width=self.param.plane_fit_ROI_width,
+                                                   height_layer_name='elevation_reference')
+        
+        return plane_fit_params
 
     def update_map_with_GET_movement(self, elevation_map, map_center, cell_n, resolution, T_MG0, T_MG1, M_r_MG, n_steps, var_h, roll=None, FEE=True):
         """
