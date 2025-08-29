@@ -43,9 +43,9 @@ class ElevationMappingNode(Node):
             'elevation_mapping_node',
             automatically_declare_parameters_from_overrides=True,
             allow_undeclared_parameters=True,
-            parameter_overrides=[
-                rclpy.Parameter('use_sim_time', rclpy.Parameter.Type.BOOL, True)
-            ]
+            # parameter_overrides=[
+            #     rclpy.Parameter('use_sim_time', rclpy.Parameter.Type.BOOL, True)
+            # ]
         )
         # self.root = get_package_share_directory("elevation_mapping_cupy")
         # weight_file = self.get_parameter('weight_filee').value
@@ -66,6 +66,7 @@ class ElevationMappingNode(Node):
         self.register_publishers()
         self.register_timers()
         self._last_t = None
+        self.tf_offset = rclpy.time.Duration(seconds=0.1)
 
     def initialize_elevation_mapping(self) -> None:
         self._pointcloud_process_counter = 0
@@ -92,7 +93,7 @@ class ElevationMappingNode(Node):
                 transform = self.safe_lookup_transform(
                     self.map_frame,
                     frame_id,
-                    self.get_clock().now()                )
+                    self.get_clock().now()-self.tf_offset)
                 t = transform.transform.translation
                 p = np.array([t.x, t.y, t.z])
                 p[2] += self.initialize_tf_offset[i]
@@ -406,6 +407,30 @@ class ElevationMappingNode(Node):
         )
         self._image_process_counter += 1
 
+
+    # Temporarily replacing the function in ros2_numpy
+    # pts = rnp.point_cloud2.get_xyz_points(points)
+    def get_xyz_points(self, cloud_array, remove_nans=True, dtype=float):
+        '''Pulls out x, y, and z columns from the cloud recordarray, and returns
+        a 3xN matrix.
+        '''
+        # remove crap points
+        mask = None
+        if remove_nans:
+            mask = np.isfinite(cloud_array['x']) & \
+                np.isfinite(cloud_array['y']) & \
+                np.isfinite(cloud_array['z'])
+            cloud_array = np.where(mask[..., None], cloud_array, np.nan)
+
+        # pull out x, y, and z values
+        points = np.zeros(cloud_array.shape + (3,), dtype=dtype)
+        points[...,0] = cloud_array['x']
+        points[...,1] = cloud_array['y']
+        points[...,2] = cloud_array['z']
+
+        return points, mask
+
+
     def pointcloud_callback(self, msg: PointCloud2, sub_key: str) -> None:
         self._last_t = msg.header.stamp
         # self.get_logger().info(f"Received pointcloud with {msg.width} points")
@@ -415,6 +440,7 @@ class ElevationMappingNode(Node):
             points = rnp.numpify(msg)
         except:
             return
+        # if points['xyz'].size == 0:
         if points['x'].size == 0:
             return
         frame_sensor_id = msg.header.frame_id
@@ -443,12 +469,14 @@ class ElevationMappingNode(Node):
         B_r_MB = np.array([t.x, t.y, t.z], dtype=np.float32)
         C_MB = quaternion_matrix([q.x, q.y, q.z, q.w])[:3, :3].astype(np.float32)
 
-        pts = rnp.point_cloud2.get_xyz_points(points)
+        pts, nan_mask = self.get_xyz_points(points, remove_nans=True) # Old way the points, trying this below
+        # pts = points['xyz']
         # TODO: This is probably expensive. Consider modifying rnp or input_pointcloud()
         # Append additional channels to pts
         for channel in additional_channels:
+            # if channel in points.keys():
             if channel in points.dtype.names:
-                data = points[channel].flatten()
+                data = points[channel][nan_mask]
                 if data.ndim == 1:
                     data = data[:, np.newaxis]
                 pts = np.hstack((pts, data))
@@ -631,8 +659,7 @@ class ElevationMappingNode(Node):
     def GET_tf_callback(self, sub_key: str) -> None:
         # self.get_logger().info(f"Received GET odometry message for {sub_key}")
         # Adding a small delay to the last time to avoid tf2 lookup issues
-        delay_seconds = 0.1
-        self._last_t = self.get_clock().now() - rclpy.time.Duration(seconds=delay_seconds)
+        self._last_t = self.get_clock().now() - self.tf_offset
         GET_hist = self._GET_subs_history[sub_key]
         try:
             msg = self.odom_msg_from_tf(
@@ -697,11 +724,13 @@ class ElevationMappingNode(Node):
             self.pose_initialized = True
         # If pose_fps is 0.0, then we only want to use the pose update to initialize the map
         elif (not self.pose_initialized) or (self.update_pose_fps > 0.0):
+            self.get_logger().info("Updating pose")
             # Don't update the pose if we haven't received any data yet unless we are initializing the map
             if self._last_t is None and self.pose_initialized:
+                pass
                 return
             elif self._last_t is None:
-                # stamp = self.get_clock().now()
+                stamp = self.get_clock().now()
                 # Wait until we have received a pointcloud or image to initialize the map
                 return
             else:

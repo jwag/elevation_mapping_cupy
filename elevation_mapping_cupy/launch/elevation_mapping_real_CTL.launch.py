@@ -84,9 +84,9 @@ def generate_launch_description():
     
     return LaunchDescription([
         use_sim_time_arg,
-        rviz_config_arg,
+        # rviz_config_arg,
         use_python_node_arg,
         elevation_mapping_node_py,
         elevation_mapping_node,
-        rviz_node
+        # rviz_node
     ])

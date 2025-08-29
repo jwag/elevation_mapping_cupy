@@ -16,29 +16,29 @@
         default: 'bayesian_inference'
 
     subscribers:
-        front_zed:
-            topic_name: '/front/zed_node/point_cloud/cloud_registered'
-            data_type: pointcloud
-            channels: ['rgb']
-            noise_model_name: SLS_old
-            SLS_old_noise_model_params:
-                sensor_noise_factor: 0.05                                             # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
-            constant_noise_model_params:
-                constant_variance: 0.01
-            SLS_noise_model_params:
-                a: 6.8e-3
-                b: 28.0e-3
-                c: 38.0e-3
-                # d: (42e-3+2.0e-3)/2.0
-                d: 22.0e-3
-                Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
-                Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
-            LiDAR_noise_model_params:
-                a: 0.012
-                b: 6.8
-                c: 0.81
-                Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
-                Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
+        # front_zed:
+        #     topic_name: '/front/zed_node/point_cloud/cloud_registered'
+        #     data_type: pointcloud
+        #     channels: ['rgb']
+        #     noise_model_name: SLS_old
+        #     SLS_old_noise_model_params:
+        #         sensor_noise_factor: 0.05                                             # point's noise is sensor_noise_factor*z^2 (z is distance from sensor).
+        #     constant_noise_model_params:
+        #         constant_variance: 0.01
+        #     SLS_noise_model_params:
+        #         a: 6.8e-3
+        #         b: 28.0e-3
+        #         c: 38.0e-3
+        #         # d: (42e-3+2.0e-3)/2.0
+        #         d: 22.0e-3
+        #         Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
+        #         Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
+        #     LiDAR_noise_model_params:
+        #         a: 0.012
+        #         b: 6.8
+        #         c: 0.81
+        #         Sigma_Theta_BS_diag: [1.0e-1, 1.0e-1, 1.0e-1]
+        #         Sigma_b_r_BS_diag: [1.0e-3, 1.0e-3, 1.0e-3]
         rear_zed:
             topic_name: '/rear/zed_node/point_cloud/cloud_registered'
             data_type: pointcloud
@@ -65,8 +65,8 @@
         simple_flat_blade:
           data_type: GET
           GET_model_name: 'simple_blade'
-          topic_name: ''
-          use_blade_odometry: false
+          topic_name: 'fake_odom'
+          use_blade_odometry: true
           blade_frame: 'blade_edge_link'
           max_translation_m: 0.2
           max_time_s: 0.5
@@ -78,7 +78,7 @@
 
     publishers:
       elevation_map_raw:
-        layers: ['elevation', 'traversability', 'variance', 'elevation_loose', 'elevation_compact', 'elevation_reference', 'rgb']
+        layers: ['elevation', 'traversability', 'variance', 'elevation_loose', 'elevation_compact', 'elevation_reference']
         # layers: ['elevation', 'traversability', 'variance','rgb', 'elevation_loose', 'elevation_compact']
         basic_layers: ['elevation']
         fps: 5.0
