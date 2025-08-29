@@ -168,7 +168,7 @@ class ElevationMappingNode(Node):
                 msg.header.stamp
             )
             if transform_base_to_sensor is None:
-                self.get_logger().warn(f"PointCloud callback Base to Sensor: {error_msg}")
+                # self.get_logger().warn(f"PointCloud callback Base to Sensor: {error_msg}")
                 return False
             t = transform_base_to_sensor.transform.translation
             q = transform_base_to_sensor.transform.rotation
@@ -183,7 +183,7 @@ class ElevationMappingNode(Node):
             msg.header.stamp
         )
         if transform_map_to_base is None:
-            self.get_logger().warn(f"PointCloud callback: {error_msg}")
+            # self.get_logger().warn(f"PointCloud callback: {error_msg}")
             return False
         # Now we can actually process the pointcloud
         self.handle_pointcloud(msg, sub_key, transform_map_to_base)

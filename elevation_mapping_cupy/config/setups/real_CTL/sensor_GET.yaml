@@ -66,19 +66,20 @@
           data_type: GET
           GET_model_name: 'simple_blade'
           topic_name: 'fake_odom'
-          use_blade_odometry: true
+          use_blade_odometry: false
           blade_frame: 'blade_edge_link'
-          max_translation_m: 0.2
+          max_translation_m: 0.4
           max_time_s: 0.5
           max_rotation_deg: 10.0
           soil_prop_est_net_checkpoint_path: './lightning_logs/Elevation-Mapping1-phys_inf/lightning_logs/version_42/checkpoints/last.ckpt'
           simple_blade_GET_params:
             blade_width: 1.850
-            blade_height: 0.760
+            blade_height: 0.76
 
     publishers:
       elevation_map_raw:
-        layers: ['elevation', 'traversability', 'variance', 'elevation_loose', 'elevation_compact', 'elevation_reference', 'rgb']
+        # layers: ['elevation', 'traversability', 'variance', 'elevation_loose', 'elevation_compact', 'elevation_reference', 'rgb']
+        layers: ['elevation']
         # layers: ['elevation', 'traversability', 'variance','rgb', 'elevation_loose', 'elevation_compact']
         basic_layers: ['elevation']
         fps: 5.0
