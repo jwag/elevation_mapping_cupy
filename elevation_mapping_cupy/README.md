@@ -26,3 +26,26 @@ If you want to drive the turtlebot around using the keyboard then run:
 ```bash
 ros2 run turtlebot3_teleop teleop_keyboard 
 ```
+
+# Example 2: Vortex Studio CAT 299 D3 CTL Example
+We assume properly sourced terminals, with `RMW_IMPLEMENTATION=rmw_zenoh_cpp`, and the same `ROS_DOMAIN_ID=12`.
+
+If using zenoh as rmw then start one terminal up and run the router.
+```bash
+ros2 run rmw_zenoh_cpp rmw_zenohd
+```
+
+Connect an XBOX controller to the linux machine and run the joy node
+```bash
+ros2 run joy joy_node
+```
+
+On the Windows Machine launch the Vortex :
+```bash
+ros2 run ros2_vortex_SIL CTL_SIL_node
+``` 
+
+Launch the elevation mapping node with the configs for the CTL:
+```bash
+ros2 launch elevation_mapping_cupy elevation_mapping_vortex_CTL.launch.py
+```

@@ -5,6 +5,8 @@ Panels:
     Property Tree Widget:
       Expanded:
         - /Global Options1
+        - /Rear LiDAR1/Autocompute Value Bounds1
+        - /Front LiDAR1/Autocompute Value Bounds1
       Splitter Ratio: 0.5
     Tree Height: 663
   - Class: rviz_common/Selection
@@ -18,7 +20,6 @@ Panels:
   - Class: rviz_common/Views
     Expanded:
       - /Current View1
-      - /Current View1/Focal Point1
     Name: Views
     Splitter Ratio: 0.5
   - Class: rviz_common/Time
@@ -82,6 +83,8 @@ Visualization Manager:
           Value: true
         flat_blade_approx:
           Value: true
+        front_lidar:
+          Value: true
         odom:
           Value: true
         rear_lidar:
@@ -90,38 +93,40 @@ Visualization Manager:
       Name: TF
       Show Arrows: true
       Show Axes: true
-      Show Names: true
+      Show Names: false
       Tree:
         odom:
           base_footprint:
             flat_blade_approx:
+              {}
+            front_lidar:
               {}
             rear_lidar:
               {}
       Update Interval: 0
       Value: true
     - Alpha: 1
-      Autocompute Intensity Bounds: true
+      Autocompute Intensity Bounds: false
       Autocompute Value Bounds:
-        Max Value: 10
-        Min Value: -10
-        Value: true
+        Max Value: -1
+        Min Value: 1
+        Value: false
       Axis: Z
       Channel Name: intensity
       Class: rviz_default_plugins/PointCloud2
       Color: 255; 255; 255
-      Color Transformer: Intensity
+      Color Transformer: AxisColor
       Decay Time: 0
       Enabled: true
       Invert Rainbow: false
       Max Color: 255; 255; 255
-      Max Intensity: 4096
+      Max Intensity: 1
       Min Color: 0; 0; 0
-      Min Intensity: 0
+      Min Intensity: -1
       Name: Rear LiDAR
       Position Transformer: XYZ
       Selectable: true
-      Size (Pixels): 3
+      Size (Pixels): 10
       Size (m): 0.009999999776482582
       Style: Points
       Topic:
@@ -137,14 +142,14 @@ Visualization Manager:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 10
-        Min Value: -10
-        Value: true
+        Max Value: -1
+        Min Value: 1
+        Value: false
       Axis: Z
       Channel Name: intensity
       Class: rviz_default_plugins/PointCloud2
       Color: 255; 255; 255
-      Color Transformer: Intensity
+      Color Transformer: AxisColor
       Decay Time: 0
       Enabled: true
       Invert Rainbow: false
@@ -155,7 +160,7 @@ Visualization Manager:
       Name: Front LiDAR
       Position Transformer: XYZ
       Selectable: true
-      Size (Pixels): 3
+      Size (Pixels): 10
       Size (m): 0.009999999776482582
       Style: Points
       Topic:
@@ -182,12 +187,13 @@ Visualization Manager:
         Value: /intel_realsense_r200_rgb/image_raw
       Value: false
       Visibility:
+        Front LiDAR: true
         Grid: true
+        GridMap-elevation: true
         GridMap-loose: true
         GridMap-rgb: true
         GridMapFiltered: true
         Image: true
-        PointCloud2: true
         Rear LiDAR: true
         RobotModel: true
         TF: true
@@ -247,11 +253,11 @@ Visualization Manager:
         Value: /elevation_mapping_node/elevation_map_raw
       Use Rainbow: true
       Value: false
-    - Alpha: 1
-      Autocompute Intensity Bounds: true
+    - Alpha: 0.5
+      Autocompute Intensity Bounds: false
       Class: grid_map_rviz_plugin/GridMap
       Color: 200; 200; 200
-      Color Layer: elevation_loose
+      Color Layer: elevation
       Color Transformer: IntensityLayer
       Enabled: true
       Height Layer: elevation
@@ -259,9 +265,35 @@ Visualization Manager:
       History Length: 1
       Invert Rainbow: false
       Max Color: 255; 255; 255
-      Max Intensity: 10
+      Max Intensity: 1
       Min Color: 0; 0; 0
-      Min Intensity: 0
+      Min Intensity: -1
+      Name: GridMap-elevation
+      Show Grid Lines: false
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /elevation_mapping_node/elevation_map_raw
+      Use Rainbow: true
+      Value: true
+    - Alpha: 0.5
+      Autocompute Intensity Bounds: false
+      Class: grid_map_rviz_plugin/GridMap
+      Color: 200; 200; 200
+      Color Layer: elevation_loose
+      Color Transformer: IntensityLayer
+      Enabled: false
+      Height Layer: elevation
+      Height Transformer: GridMapLayer
+      History Length: 1
+      Invert Rainbow: false
+      Max Color: 255; 255; 255
+      Max Intensity: 1
+      Min Color: 0; 0; 0
+      Min Intensity: -1
       Name: GridMap-loose
       Show Grid Lines: true
       Topic:
@@ -272,7 +304,7 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /elevation_mapping_node/elevation_map_raw
       Use Rainbow: true
-      Value: true
+      Value: false
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Class: grid_map_rviz_plugin/GridMap
@@ -344,26 +376,26 @@ Visualization Manager:
   Value: true
   Views:
     Current:
-      Class: rviz_default_plugins/ThirdPersonFollower
-      Distance: 36.61386489868164
+      Class: rviz_default_plugins/Orbit
+      Distance: 22.856735229492188
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -1.557861328125
-        Y: 0.9135117530822754
-        Z: -0.01863628812134266
+        X: -1.0772418975830078
+        Y: -1.276004672050476
+        Z: -0.7410376667976379
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.27479690313339233
-      Target Frame: base_link
-      Value: ThirdPersonFollower (rviz_default_plugins)
-      Yaw: 2.6785926818847656
+      Pitch: 0.7847975492477417
+      Target Frame: odom
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 2.0304107666015625
     Saved: ~
 Window Geometry:
   Camera:
@@ -385,5 +417,5 @@ Window Geometry:
   Views:
     collapsed: false
   Width: 1920
-  X: 2560
-  Y: 27
+  X: 292
+  Y: 65
