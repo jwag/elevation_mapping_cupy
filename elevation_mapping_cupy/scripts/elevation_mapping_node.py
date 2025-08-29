@@ -604,11 +604,14 @@ class ElevationMappingNode(Node):
                 if data.ndim == 1:
                     data = data[:, np.newaxis]
                 pts = np.hstack((pts, data))
+        # Adding static noise value for now to trigger alignment
+        Sigma_b_r_MB = np.zeros((3, 3), dtype=np.float32)
+        Sigma_b_r_MB[2, 2] = 0.1
         self._map.input_pointcloud(sensor_ID=sub_key,
                                    raw_points=pts,
                                    channels=channels,
                                    C_MB=C_MB, B_r_MB=B_r_MB,
-                                   Sigma_b_r_MB=None,
+                                   Sigma_b_r_MB=Sigma_b_r_MB,
                                    Sigma_Theta_MB=None)
         self._pointcloud_process_counter += 1
     

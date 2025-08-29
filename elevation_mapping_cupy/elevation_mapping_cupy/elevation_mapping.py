@@ -435,6 +435,9 @@ class ElevationMap:
             # triggering drift compensation
             position_noise = cp.sqrt(Sigma_b_r_MB[0, 0] + Sigma_b_r_MB[1, 1] + Sigma_b_r_MB[2, 2])
             orientation_noise = cp.sqrt(Sigma_Theta_MB[0, 0] + Sigma_Theta_MB[1, 1] + Sigma_Theta_MB[2, 2])
+            print("Position noise: ", position_noise)
+            print("Error: ", error)
+            print("Error count: ", error_cnt)
             if (
                 self.param.enable_drift_compensation
                 and error_cnt > self.param.min_height_drift_cnt
@@ -443,10 +446,15 @@ class ElevationMap:
                     or orientation_noise > self.param.orientation_noise_thresh
                 )
             ):
+                print("Drift compensation triggered")
                 self.mean_error = error / error_cnt
                 self.additive_mean_error += self.mean_error
                 if np.abs(self.mean_error) < self.param.max_drift:
                     self.elevation_map[0] += self.mean_error * self.param.drift_compensation_alpha
+                    # also add the drift to the upper bound
+                    self.elevation_map[5] += self.mean_error * self.param.drift_compensation_alpha
+                    # also add to elevation reference
+                    self.elevation_map[8] += self.mean_error * self.param.drift_compensation_alpha
             # Compute the vertical variance for the sensor using uncertainty propagation for the sensor
             var_h = self.sensor_processors[sensor_ID].get_z_variance(points, C_MB, B_r_MB, Sigma_Theta_MB, Sigma_b_r_MB)
             self.add_points_kernel(

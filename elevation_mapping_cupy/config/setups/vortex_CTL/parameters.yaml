@@ -8,16 +8,16 @@ elevation_mapping_node:
     map_length: 20.0                                # map's size in m.
     mahalanobis_thresh: 2.0                         # points outside this number of std deviation are considered as outliers.
     outlier_variance: 0.01                          # if point is outlier, add this value to the cell.
-    drift_compensation_variance_inlier: 0.05        # cells under this value is used for drift compensation.
-    max_drift: 0.1                                  # drift compensation happens only the drift is smaller than this value (for safety)
-    drift_compensation_alpha: 0.1                   # drift compensation alpha for smoother update of drift compensation
+    drift_compensation_variance_inlier: 10.0        # cells under this value is used for drift compensation.
+    max_drift: 100.1                                  # drift compensation happens only the drift is smaller than this value (for safety)
+    drift_compensation_alpha: 1.0                   # drift compensation alpha for smoother update of drift compensation
     variance_inflation_rate: 0.001                  # Rate of inflation of variance for drift compensation in units of m^2/s
     max_variance: 100.0                             # maximum variance for each cell.
     initial_variance: 1000.0                        # initial variance for each cell.
-    traversability_inlier: 0.9                      # cells with higher traversability are used for drift compensation.
+    traversability_inlier: 0.01                      # cells with higher traversability are used for drift compensation.
     dilation_size: 3                                # dilation filter size before traversability filter.
     wall_num_thresh: 20                             # if there are more points than this value, only higher points than the current height are used to make the wall more sharp.
-    min_height_drift_cnt: 100                       # drift compensation only happens if the valid cells are more than this number.
+    min_height_drift_cnt: 30                       # drift compensation only happens if the valid cells are more than this number.
     position_noise_thresh: 0.01                     # if the position change is bigger than this value, the drift compensation happens.
     orientation_noise_thresh: 0.01                  # if the orientation change is bigger than this value, the drift compensation happens.
     min_valid_distance: 0.1                         # points with shorter distance will be filtered out.
@@ -113,7 +113,7 @@ elevation_mapping_node:
     initialized_variance: 1000.0                                        # initial variance for each cell.
     # Config for points initializer # TODO: rename these with points prefix
     initialize_method: 'linear'                                         # Choose one from 'nearest', 'linear', 'cubic'
-    initialize_frame_id: ['odom']                             # One tf (like ['footprint'] ) initializes a square around it. 
+    initialize_frame_id: ['base_footprint']                             # One tf (like ['footprint'] ) initializes a square around it. 
     initialize_tf_offset: [0.0]                                         # z direction. Should be same number as initialize_frame_id. 
     dilation_size_initialize: 2                                         # dilation size after the init. 
     initialize_tf_grid_size: 10.0                                        # This is not used if number of tf is more than 3. 
